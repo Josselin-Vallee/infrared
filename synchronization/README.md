@@ -13,7 +13,7 @@
     Copy image to sdcard. Here sdX stands for the device name of the sdcard. You can find it by typing:
     
     $ lsblk
-    $ sudo gunzip --stdout rpimaster-20160423.img.gz | sudo dd bs=4M of=/dev/sdX
+    $ sudo gunzip --stdout sdimage-20160424.img.gz | sudo dd bs=4M of=/dev/sdX
 
     1. On both master and slave:
 
