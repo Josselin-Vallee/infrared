@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python2
 
 import binascii
 import socket
@@ -27,7 +27,7 @@ while True:
             if data:
                 unpacked_data = packer.unpack(data)
                 print('Time received from client: ', unpacked_data)
-                
+
                 value = (time.clock())
                 packed_data = packer.pack(*value)
                 conn.sendall(packed_data)
@@ -35,5 +35,5 @@ while True:
                 print('No more data received from client')
                 break
 
-    finally:        
+    finally:
         conn.close()

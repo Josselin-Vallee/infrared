@@ -59,11 +59,5 @@
 
     - reboot:
     # reboot
-
-    3. On both:
-
-    - start virtual python environment (type deactivate to exit environment):
-    $ source ~/python2/bin/activate (for python 2)
-    $ source ~/python3/bin/activate (for python 3)
     
 </code>
