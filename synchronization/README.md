@@ -1,13 +1,21 @@
 <code>
-    Here's a quick guide on how to configure the RPi master/slave unit after having written the latest image onto the sd-card:
+    
+    Here's a guide on how to configure the RPi master/slave unit:
 
     Username      : alarm
     Password      : alarm
     Root password : root
     Master IP     : 192.168.1.13
     Slave IP      : 192.168.1.14
+    
+    0. Decompress and write the sdcard image to the scdard of the RPi:
+    Download link is in the google docs document. md5sum: ef555083f4aab9b2d8f0774b758946d3
+    Copy image to sdcard. Here sdX stands for the device name of the sdcard. You can find it by typing:
+    
+    $ lsblk
+    $ sudo gunzip --stdout rpimaster-20160423.img.gz | sudo dd bs=4M of=/dev/sdX
 
-    1. On both:
+    1. On both master and slave:
 
     - copy setup folder to user's home folder on pi (replace by pi's IP)
     (on pc) $ scp -r ./setup alarm@192.168.1.50:/home/alarm/
@@ -54,8 +62,8 @@
 
     3. On both:
 
-    - start virtual python environment:
+    - start virtual python environment (type deactivate to exit environment):
     $ source ~/python2/bin/activate (for python 2)
     $ source ~/python3/bin/activate (for python 3)
-    (Type deactivate to exit environment)
+    
 </code>
