@@ -8,56 +8,29 @@
     Master IP     : 192.168.1.13
     Slave IP      : 192.168.1.14
     
-    0. Decompress and write the sdcard image to the scdard of the RPi:
+    Decompress and write the sdcard image to the scdard of the RPi:
     Download link is in the google docs document. md5sum: ef555083f4aab9b2d8f0774b758946d3
     Copy image to sdcard. Here sdX stands for the device name of the sdcard. You can find it by typing:
     
     $ lsblk
     $ sudo gunzip --stdout sdimage-20160424.img.gz | sudo dd bs=4M of=/dev/sdX
 
-    1. On both master and slave:
-
-    - copy setup folder to user's home folder on pi (replace by pi's IP)
-    (on pc) $ scp -r ./setup alarm@192.168.1.50:/home/alarm/
-    (on pi) $ su
-    (on pi) # cp -r /home/alarm/setup/* /
-    
-    2a. On master:
+    Changes necessary only on slave unit:
     - become root:
-    $ su
-
-    - change hostname in /etc/hostname to rpimaster
-    # echo rpimaster > /etc/hostname
-    
-    - setup master static IP address
-    # systemctl disable systemd-networkd.service
-    # netctl enable eth0master
-
-    - setup time synchronization master daemon:
-    # systemctl disable systemd-timesyncd.service
-    # systemctl daemon-reload
-    # systemctl enable ptpd-master.service
-
-    - reboot:
-    # reboot
-
-    2b. On slave:
-    - become root:
-    $ su
+      $ su
 
     - change hostname in /etc/hostname to rpislave
-    # echo rpislave > /etc/hostname
+      # echo rpislave > /etc/hostname
     
     - setup slave static IP address
-    # systemctl disable systemd-networkd.service
-    # netctl enable eth0slave
+      # netctl disable eth0master
+      # netctl enable eth0slave
 
     - setup time synchronization slave daemon:
-    # systemctl disable systemd-timesyncd.service
-    # systemctl daemon-reload
-    # systemctl enable ptpd-slave.service
+      # systemctl disable ptpd-master.service
+      # systemctl enable ptpd-slave.service
 
     - reboot:
-    # reboot
+      # reboot
     
 </code>
