@@ -1,0 +1,10 @@
+SPI0 MOSI = pin 19 (physical pin, not gpio identifier)
+SPI0 MISO = pin 21 (physical pin, not gpio identifier)
+SPI0 SCLK = pin 23 (physical pin, not gpio identifier)
+SPI0 CS0 = pin 24 (physical pin, not gpio identifier)
+SPI0 CS1 = pin 26 (physical pin, not gpio identifier)
+
+MCP3204 SW = pin 22 (physical pin, not gpio identifier)
+
+PWM0 = pin 3 (physical pin, not gpio identifier)
+PWM1 = pin 5 (physical pin, not gpio identifier)
