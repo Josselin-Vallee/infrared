@@ -1,0 +1,14 @@
+[Unit]
+Description=Precise Time Protocol daemon
+After=syslog.target network.target
+Wants=netctl@eth0slave.service
+
+[Service]
+TimeoutStartSec=0
+ExecStart=/opt/ptpd/ptpd2 -c /opt/ptpd/conf/ethernet-slave.conf
+Restart=Always
+RestartSec=1
+PIDFile=/var/run/ptpd2.lock
+
+[Install]
+WantedBy=multi-user.target
