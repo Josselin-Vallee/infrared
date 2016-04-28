@@ -85,6 +85,10 @@ int main(int argc, char **argv) {
     bcm2835_spi_chipSelect(BCM2835_SPI_CS0);
     bcm2835_spi_setChipSelectPolarity(BCM2835_SPI_CS0, LOW);
 
+    uint32_t hx = 0;
+    uint32_t vx = 0;
+    uint32_t threshold = 100;
+
     /* perform SPI communication */
     while (true) {
         /* Control bit selections:
@@ -96,8 +100,11 @@ int main(int argc, char **argv) {
            tbuf[1] = 0b D1,D0, x, x, x,     x,  x, x
            tbuf[2] = 0b  x, x, x, x, x,     x,  x, x */
 
-        uint32_t hx = read_horizontal();
-        uint32_t vx = read_vertical();
+        uint32_t hx_new = read_horizontal();
+        uint32_t vx_new = read_vertical();
+
+        hx = (abs(hx_new - hx) > threshold) ? hx_new : hx;
+        vx = (abs(vx_new - vx) > threshold) ? vx_new : vx;
 
         printf("hx = %04" PRIu32 ", vx = %04" PRIu32 "\r", hx, vx);
         fflush(stdout);
