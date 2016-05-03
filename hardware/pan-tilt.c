@@ -23,24 +23,34 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define SPI_CHANNEL     (0)
-#define SPI_BAUD        (1000000)
-#define SPI_FLAG_MM     (0b0000000000000000000000)
-#define SPI_FLAG_PX     (0b0000000000000000000000)
-#define SPI_FLAG_UX     (0b0000000000000000000000)
-#define SPI_FLAG_A      (0b0000000000000000000000)
-#define SPI_FLAG_W      (0b0000000000000000000000)
-#define SPI_FLAG_NNNN   (0b0000000000000000000000)
-#define SPI_FLAG_T      (0b0000000000000000000000)
-#define SPI_FLAG_R      (0b0000000000000000000000)
-#define SPI_FLAG_BBBBBB (0b0000000000000000000000)
-#define SPI_FLAGS       (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
+#define SPI_CHANNEL           (0)
+#define SPI_BAUD              (1000000)
+#define SPI_FLAG_MM           (0b0000000000000000000000)
+#define SPI_FLAG_PX           (0b0000000000000000000000)
+#define SPI_FLAG_UX           (0b0000000000000000000000)
+#define SPI_FLAG_A            (0b0000000000000000000000)
+#define SPI_FLAG_W            (0b0000000000000000000000)
+#define SPI_FLAG_NNNN         (0b0000000000000000000000)
+#define SPI_FLAG_T            (0b0000000000000000000000)
+#define SPI_FLAG_R            (0b0000000000000000000000)
+#define SPI_FLAG_BBBBBB       (0b0000000000000000000000)
+#define SPI_FLAGS             (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
 
-#define PWM_GPIO_PIN_X  (3)
-#define PWM_GPIO_PIN_Y  (5)
+#define JOYSTICK_MIN          (0)
+#define JOYSTICK_MAX          (4095)
+#define JOYSTICK_THRES        (5) /* modify if needed */
 
-#define JOYSTICK_MAX    (4095)
-#define JOYSTICK_THRES  (50) /* modify if needed */
+#define PWM_GPIO_PIN_X        (2)
+#define PWM_GPIO_PIN_Y        (3)
+/* servo motors typically expect to be updated every 20 ms with a pulse
+   between 1 ms and 2 ms */
+#define PWM_GPIO_FREQ_HZ      (50)
+#define PWM_GPIO_RANGE_US     (1000000 / PWM_GPIO_FREQ_HZ)
+#define PWM_PULSEWIDTH_MIN_US (1000)
+#define PWM_PULSEWIDTH_MAX_US (2000)
+#define PWM_PULSE_WIDTH(x)    ((((PWM_PULSEWIDTH_MAX_US - PWM_PULSEWIDTH_MIN_US) * ((x) - JOYSTICK_MIN)) / (JOYSTICK_MAX - JOYSTICK_MIN)) + PWM_PULSEWIDTH_MIN_US)
+
+#define USLEEP_DELAY          (100000)
 
 /*
  * struct joystick_t
@@ -52,12 +62,15 @@ struct joystick_t {
     uint32_t y;
 };
 
+/* global variables */
+int fd_spi = 0;
+
 /*
  * read_joystick_x
  *
  * Returns the horizontal value of the joystick in the range [0, JOYSTICK_MAX]
  */
-uint32_t read_joystick_x(int fd) {
+uint32_t read_joystick_x() {
     /* read channel 1
        ==============
        txbuf[0] = 0b  0,  0,  0,  0,  0,  1,  1,  0
@@ -76,7 +89,7 @@ uint32_t read_joystick_x(int fd) {
     txbuf[1] = 0b01000000;
     txbuf[2] = 0b00000000;
 
-    spiXfer(fd, txbuf, rxbuf, 3);
+    spiXfer(fd_spi, txbuf, rxbuf, 3);
 
     return ((rxbuf[1] & 0xf) << 8) + rxbuf[2];
 }
@@ -86,7 +99,7 @@ uint32_t read_joystick_x(int fd) {
  *
  * Returns the vertical value of the joystick in the range [0, JOYSTICK_MAX]
  */
-uint32_t read_joystick_y(int fd) {
+uint32_t read_joystick_y() {
     /* read channel 0
        ==============
        txbuf[0] = 0b  0,  0,  0,  0,  0,  1,  1,  0
@@ -105,7 +118,7 @@ uint32_t read_joystick_y(int fd) {
     txbuf[1] = 0b00000000;
     txbuf[2] = 0b00000000;
 
-    spiXfer(fd, txbuf, rxbuf, 3);
+    spiXfer(fd_spi, txbuf, rxbuf, 3);
 
     return ((rxbuf[1] & 0xf) << 8) + rxbuf[2];
 }
@@ -117,11 +130,11 @@ uint32_t read_joystick_y(int fd) {
  * returned value is only modified if the joystick has moved by more than
  * JOYSTICK_THRES in each axis.
  */
-struct joystick_t read_joystick(int fd) {
+struct joystick_t read_joystick() {
     static struct joystick_t saved = {JOYSTICK_MAX / 2, JOYSTICK_MAX / 2};
 
-    uint32_t x_new = read_joystick_x(fd);
-    uint32_t y_new = read_joystick_y(fd);
+    uint32_t x_new = read_joystick_x();
+    uint32_t y_new = read_joystick_y();
 
     saved.x = (abs(x_new - saved.x) > JOYSTICK_THRES) ? x_new : saved.x;
     saved.y = (abs(x_new - saved.y) > JOYSTICK_THRES) ? y_new : saved.y;
@@ -129,29 +142,65 @@ struct joystick_t read_joystick(int fd) {
     return saved;
 }
 
+void move_pan_tilt(struct joystick_t joystick) {
+    uint32_t pulsewidth_x = PWM_PULSE_WIDTH(joystick.x);
+    uint32_t pulsewidth_y = PWM_PULSE_WIDTH(joystick.y);
+
+    if (gpioServo(PWM_GPIO_PIN_X, pulsewidth_x) != 0) {
+        printf("Error: gpioServo() failed for PWM_GPIO_PIN_X\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (gpioServo(PWM_GPIO_PIN_Y, pulsewidth_y) != 0) {
+        printf("Error: gpioServo() failed for PWM_GPIO_PIN_Y\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
 /*
  * initialize
  */
-int initialize() {
+void initialize() {
     if (gpioInitialise() < 0) {
         printf("Error: gpioInitialise() failed\n");
         exit(EXIT_FAILURE);
     }
 
-    int fd = spiOpen(SPI_CHANNEL, SPI_BAUD, SPI_FLAGS);
-    if (fd < 0) {
+    fd_spi = spiOpen(SPI_CHANNEL, SPI_BAUD, SPI_FLAGS);
+    if (fd_spi < 0) {
         printf("Error: spiOpen() failed\n");
         exit(EXIT_FAILURE);
     }
 
-    return fd;
+    if (gpioSetPWMfrequency(PWM_GPIO_PIN_X, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
+        printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_X\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (gpioSetPWMfrequency(PWM_GPIO_PIN_Y, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
+        printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_Y\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int retval = 0;
+    retval = gpioSetPWMrange(PWM_GPIO_PIN_X, PWM_GPIO_RANGE_US);
+    if ((retval == PI_BAD_USER_GPIO) || (retval == PI_BAD_DUTYRANGE)) {
+        printf("Error: gpioSetPWMrange() failed for PWM_GPIO_PIN_X\n");
+        exit(EXIT_FAILURE);
+    }
+
+    retval = gpioSetPWMrange(PWM_GPIO_PIN_Y, PWM_GPIO_RANGE_US);
+    if ((retval == PI_BAD_USER_GPIO) || (retval == PI_BAD_DUTYRANGE)) {
+        printf("Error: gpioSetPWMrange() failed for PWM_GPIO_PIN_Y\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 /*
  * finalize
  */
-void finalize(int fd) {
-    if (spiClose(fd) != 0) {
+void finalize() {
+    if (spiClose(fd_spi) != 0) {
         printf("Error: spiClose() failed\n");
         exit(EXIT_FAILURE);
     }
@@ -160,34 +209,14 @@ void finalize(int fd) {
 }
 
 int main(int argc, char **argv) {
-    int fd_spi = initialize();
+    initialize();
 
-    int retval = 0;
-
-    // retval = gpioPWM(PWM_GPIO_PIN_X, 32);
-    // if (retval != 0) {
-    //     printf("Error: gpioPWM() failed\n");
-    //     exit(EXIT_FAILURE);
-    // }
-
-    // retval = gpioPWM(PWM_GPIO_PIN_Y, 64);
-    // if (retval != 0) {
-    //     printf("Error: gpioPWM() failed\n");
-    //     exit(EXIT_FAILURE);
-    // }
-
-    // while (true);
-
-    /* perform SPI communication */
     while (true) {
-        struct joystick_t joystick = read_joystick(fd_spi);
-        printf("x = %04" PRIu32 ", y = %04" PRIu32 "\r", joystick.x, joystick.y);
-        fflush(stdout);
-
-        usleep(100000);
+        move_pan_tilt(read_joystick());
+        usleep(USLEEP_DELAY);
     }
 
-    finalize(fd_spi);
+    finalize();
 
     return EXIT_SUCCESS;
 }
