@@ -23,34 +23,40 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define SPI_CHANNEL           (0)
-#define SPI_BAUD              (1000000)
-#define SPI_FLAG_MM           (0b0000000000000000000000)
-#define SPI_FLAG_PX           (0b0000000000000000000000)
-#define SPI_FLAG_UX           (0b0000000000000000000000)
-#define SPI_FLAG_A            (0b0000000000000000000000)
-#define SPI_FLAG_W            (0b0000000000000000000000)
-#define SPI_FLAG_NNNN         (0b0000000000000000000000)
-#define SPI_FLAG_T            (0b0000000000000000000000)
-#define SPI_FLAG_R            (0b0000000000000000000000)
-#define SPI_FLAG_BBBBBB       (0b0000000000000000000000)
-#define SPI_FLAGS             (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
+#define SPI_CHANNEL            (0)
+#define SPI_BAUD               (1000000)
+#define SPI_FLAG_MM            (0b0000000000000000000000)
+#define SPI_FLAG_PX            (0b0000000000000000000000)
+#define SPI_FLAG_UX            (0b0000000000000000000000)
+#define SPI_FLAG_A             (0b0000000000000000000000)
+#define SPI_FLAG_W             (0b0000000000000000000000)
+#define SPI_FLAG_NNNN          (0b0000000000000000000000)
+#define SPI_FLAG_T             (0b0000000000000000000000)
+#define SPI_FLAG_R             (0b0000000000000000000000)
+#define SPI_FLAG_BBBBBB        (0b0000000000000000000000)
+#define SPI_FLAGS              (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
 
-#define JOYSTICK_MIN          (0)
-#define JOYSTICK_MAX          (4095)
-#define JOYSTICK_THRES        (5) /* modify if needed */
+#define JOYSTICK_MIN           (0)
+#define JOYSTICK_MAX           (4095)
+#define JOYSTICK_MIDDLE        ((JOYSTICK_MIN + JOYSTICK_MAX) / 2)
+#define JOYSTICK_THRES         (5)
+#define JOYSTICK_DEC_THRES     ((3 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_INC_THRES     ((5 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_INIT_X        (JOYSTICK_MIDDLE)
+#define JOYSTICK_INIT_Y        (JOYSTICK_MIDDLE)
 
-#define PWM_GPIO_PIN_X        (2)
-#define PWM_GPIO_PIN_Y        (3)
-/* servo motors typically expect to be updated every 20 ms with a pulse
+#define PWM_GPIO_PIN_X         (3)
+#define PWM_GPIO_PIN_Y         (2)
+/* servo motors typically expect to be updated every 20 ms (50 Hz) with a pulse
    between 1 ms and 2 ms */
-#define PWM_GPIO_FREQ_HZ      (50)
-#define PWM_GPIO_RANGE_US     (1000000 / PWM_GPIO_FREQ_HZ)
-#define PWM_PULSEWIDTH_MIN_US (1000)
-#define PWM_PULSEWIDTH_MAX_US (2000)
-#define PWM_PULSE_WIDTH(x)    ((((PWM_PULSEWIDTH_MAX_US - PWM_PULSEWIDTH_MIN_US) * ((x) - JOYSTICK_MIN)) / (JOYSTICK_MAX - JOYSTICK_MIN)) + PWM_PULSEWIDTH_MIN_US)
+#define PWM_GPIO_FREQ_HZ       (50)
+#define PWM_GPIO_RANGE_US      (1000000 / PWM_GPIO_FREQ_HZ)
+#define PWM_PULSEWIDTH_MIN_US  (1250) /* hardware minimum is 1000 us */
+#define PWM_PULSEWIDTH_MAX_US  (1750) /* hardware maximum is 2000 us */
+#define PWM_PULSEWIDTH_INIT_US ((PWM_PULSEWIDTH_MIN_US + PWM_PULSEWIDTH_MAX_US) / 2)
+#define PWM_PULSEWIDTH_STEP_US (10)
 
-#define USLEEP_DELAY          (100000)
+#define USLEEP_DELAY           (2 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
 
 /*
  * struct joystick_t
@@ -68,7 +74,8 @@ int fd_spi = 0;
 /*
  * read_joystick_x
  *
- * Returns the horizontal value of the joystick in the range [0, JOYSTICK_MAX]
+ * Returns the horizontal value of the joystick in the range [0, JOYSTICK_MAX],
+ * as reported by the ADC-converted value obtained from the joystick's VRx pin.
  */
 uint32_t read_joystick_x() {
     /* read channel 1
@@ -97,7 +104,8 @@ uint32_t read_joystick_x() {
 /*
  * read_joystick_y
  *
- * Returns the vertical value of the joystick in the range [0, JOYSTICK_MAX]
+ * Returns the vertical value of the joystick in the range [0, JOYSTICK_MAX],
+ * as reported by the ADC-converted value obtained from the joystick's VRy pin.
  */
 uint32_t read_joystick_y() {
     /* read channel 0
@@ -126,32 +134,85 @@ uint32_t read_joystick_y() {
 /*
  * read_joystick
  *
- * Returns an (x,y) tuple containing the current value of the joystick. The
- * returned value is only modified if the joystick has moved by more than
- * JOYSTICK_THRES in each axis.
+ * Returns an (x,y) tuple containing the current value of the joystick as wanted
+ * by the user (i.e. rotated by 90° counter-clockwise). The returned value is
+ * only modified if the joystick has moved by more than JOYSTICK_THRES in each
+ * axis.
  */
 struct joystick_t read_joystick() {
-    static struct joystick_t saved = {JOYSTICK_MAX / 2, JOYSTICK_MAX / 2};
+    static uint32_t saved_x = JOYSTICK_MIDDLE;
+    static uint32_t saved_y = JOYSTICK_MIDDLE;
 
     uint32_t x_new = read_joystick_x();
     uint32_t y_new = read_joystick_y();
 
-    saved.x = (abs(x_new - saved.x) > JOYSTICK_THRES) ? x_new : saved.x;
-    saved.y = (abs(x_new - saved.y) > JOYSTICK_THRES) ? y_new : saved.y;
+    /* stabilize joystick reading */
+    saved_x = (abs(x_new - saved_x) > JOYSTICK_THRES) ? x_new : saved_x;
+    saved_y = (abs(y_new - saved_y) > JOYSTICK_THRES) ? y_new : saved_y;
 
-    return saved;
+    /*
+     * joystick is rotated 90° counter-clockwise, so need to remap x and y:
+     *
+     * |==========|==========|
+     * |  ACTUAL  |   WANT   |
+     * |==========|==========|
+     * |    x-    |    y+    |
+     * | y- oo y+ | x- oo x+ |
+     * |    x+    |    y-    |
+     * |==========|==========|
+     */
+    struct joystick_t res;
+    res.x = saved_y;
+    res.y = JOYSTICK_MAX - saved_x;
+    return res;
 }
 
+/*
+ * move_pan_tilt
+ */
 void move_pan_tilt(struct joystick_t joystick) {
-    uint32_t pulsewidth_x = PWM_PULSE_WIDTH(joystick.x);
-    uint32_t pulsewidth_y = PWM_PULSE_WIDTH(joystick.y);
+    static uint32_t pulsewidth_x_us = PWM_PULSEWIDTH_INIT_US;
+    static uint32_t pulsewidth_y_us = PWM_PULSEWIDTH_INIT_US;
 
-    if (gpioServo(PWM_GPIO_PIN_X, pulsewidth_x) != 0) {
+    /* update x */
+    if (JOYSTICK_INC_THRES < joystick.x) {
+        pulsewidth_x_us += PWM_PULSEWIDTH_STEP_US;
+    } else if (joystick.x < JOYSTICK_DEC_THRES) {
+        pulsewidth_x_us -= PWM_PULSEWIDTH_STEP_US;
+    }
+
+    /* update y */
+    if (JOYSTICK_INC_THRES < joystick.y) {
+        pulsewidth_y_us += PWM_PULSEWIDTH_STEP_US;
+    } else if (joystick.y < JOYSTICK_DEC_THRES) {
+        pulsewidth_y_us -= PWM_PULSEWIDTH_STEP_US;
+    }
+
+    /* bound x */
+    if (pulsewidth_x_us <= PWM_PULSEWIDTH_MIN_US) {
+        pulsewidth_x_us = PWM_PULSEWIDTH_MIN_US;
+    } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_x_us) {
+        pulsewidth_x_us = PWM_PULSEWIDTH_MAX_US;
+    }
+
+    /* bound y */
+    if (pulsewidth_y_us <= PWM_PULSEWIDTH_MIN_US) {
+        pulsewidth_y_us = PWM_PULSEWIDTH_MIN_US;
+    } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_y_us) {
+        pulsewidth_y_us = PWM_PULSEWIDTH_MAX_US;
+    }
+
+    // printf("joystick.x = %04" PRIu32 ", joystick.y = %04" PRIu32 ", pulsewidth_x_us = %04" PRIu32 ", pulsewidth_y_us = %04" PRIu32 "\r", joystick.x, joystick.y, pulsewidth_x_us, pulsewidth_y_us);
+    // fflush(stdout);
+
+    /* set PWM x */
+    if (gpioServo(PWM_GPIO_PIN_X, pulsewidth_x_us) != 0) {
         printf("Error: gpioServo() failed for PWM_GPIO_PIN_X\n");
         exit(EXIT_FAILURE);
     }
 
-    if (gpioServo(PWM_GPIO_PIN_Y, pulsewidth_y) != 0) {
+    /* set PWM y */
+    if (gpioServo(PWM_GPIO_PIN_Y, pulsewidth_y_us) != 0) {
         printf("Error: gpioServo() failed for PWM_GPIO_PIN_Y\n");
         exit(EXIT_FAILURE);
     }
