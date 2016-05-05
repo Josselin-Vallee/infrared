@@ -45,6 +45,7 @@
 #define JOYSTICK_INC_THRES       ((5 * JOYSTICK_MAX) / 8)
 #define JOYSTICK_INIT_X          (JOYSTICK_MIDDLE)
 #define JOYSTICK_INIT_Y          (JOYSTICK_MIDDLE)
+#define JOYSTICK_BUTTON_GPIO_PIN (25)
 
 #define PWM_GPIO_PIN_X           (3)
 #define PWM_GPIO_PIN_Y           (2)
@@ -72,14 +73,18 @@ struct joystick_t {
 
 /* global variables */
 int fd_spi = 0;
+volatile bool joystick_button_pressed = false;
+volatile bool joystick_button_pressed_handling = false;
 
 uint32_t read_joystick_x();
 uint32_t read_joystick_y();
 struct joystick_t read_joystick();
 void move_pan_tilt(struct joystick_t joystick);
-void my_handler(int signum);
 void initialize();
 void finalize();
+void int_handler(int signum);
+void joystick_button_isr(int gpio, int level, uint32_t tick);
+void handle_joystick_button_press();
 
 /*
  * read_joystick_x
@@ -232,6 +237,7 @@ void move_pan_tilt(struct joystick_t joystick) {
  * initialize
  *
  * - Initializes the pigpio library
+ * - Enable pull-up resistor for joystick button
  * - Opens an SPI file descriptor
  * - Sets the PWM frequency
  * - Sets the PWM range
@@ -242,27 +248,31 @@ void initialize() {
         exit(EXIT_FAILURE);
     }
 
-    if (gpioSetSignalFunc(SIGINT, my_handler) == PI_BAD_SIGNUM) {
-        printf("Error: gpioSetSignalFunc() failed\n");
-        exit(EXIT_FAILURE);
-    }
-
+    /* create SPI handle */
     fd_spi = spiOpen(SPI_CHANNEL, SPI_BAUD, SPI_FLAGS);
     if (fd_spi < 0) {
         printf("Error: spiOpen() failed\n");
         exit(EXIT_FAILURE);
     }
 
+    /* Joystick is connected to GND when pressed, so we need a pull-up resistor
+       to detect changes in the SW signal */
+    if (gpioSetPullUpDown(JOYSTICK_BUTTON_GPIO_PIN, PI_PUD_UP) != 0) {
+        printf("Error: gpioSetPullUpDown() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* set PWM frequency */
     if (gpioSetPWMfrequency(PWM_GPIO_PIN_X, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
         printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_X\n");
         exit(EXIT_FAILURE);
     }
-
     if (gpioSetPWMfrequency(PWM_GPIO_PIN_Y, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
         printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_Y\n");
         exit(EXIT_FAILURE);
     }
 
+    /* set PWM range */
     int retval = 0;
     retval = gpioSetPWMrange(PWM_GPIO_PIN_X, PWM_GPIO_RANGE_US);
     if ((retval == PI_BAD_USER_GPIO) || (retval == PI_BAD_DUTYRANGE)) {
@@ -292,16 +302,74 @@ void finalize() {
     gpioTerminate();
 }
 
-void my_handler(int signum) {
+/*
+ * int_handler
+ *
+ * Cleans up all open file handles and exits the program
+ */
+void int_handler(int signum) {
     finalize();
     exit(EXIT_SUCCESS);
+}
+
+/*
+ * joystick_button_isr
+ *
+ * Interrupt service routine for the joystick button.
+ */
+void joystick_button_isr(int gpio, int level, uint32_t tick) {
+    /* only enable button press if previous button press is no longer being
+       handled (to avoid duplicate presses) */
+    if (!joystick_button_pressed_handling) {
+        joystick_button_pressed = true;
+    }
+}
+
+/*
+ * handle_joystick_button_press
+ *
+ * If a button press has occurred, then send a packet through a socket to inform
+ * the control program of the event.
+ */
+void handle_joystick_button_press() {
+    if (joystick_button_pressed) {
+        /* prevent multiple presses from being registered */
+        joystick_button_pressed_handling = true;
+
+        /* acknowledge button press */
+        joystick_button_pressed = false;
+
+        printf("button pressed\n");
+        fflush(stdout);
+
+        /* send data to socket */
+
+
+        /* enable future button presses */
+        joystick_button_pressed_handling = false;
+    }
 }
 
 int main(int argc, char **argv) {
     initialize();
 
+    /* register signal handler for SIGINT (ctrl+c) */
+    if (gpioSetSignalFunc(SIGINT, int_handler) == PI_BAD_SIGNUM) {
+        printf("Error: gpioSetSignalFunc() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* register interrupt for joystick button press */
+    if (gpioSetISRFunc(JOYSTICK_BUTTON_GPIO_PIN, RISING_EDGE, 0, joystick_button_isr) != 0) {
+        printf("Error: gpioSetISRFunc() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
     while (true) {
+        handle_joystick_button_press();
         move_pan_tilt(read_joystick());
+
+        /* sleep for some time to avoid the servo from moving too fast */
         usleep(USLEEP_DELAY);
     }
 
