@@ -18,45 +18,47 @@
 
 #include <pigpio.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 
-#define SPI_CHANNEL            (0)
-#define SPI_BAUD               (1000000)
-#define SPI_FLAG_MM            (0b0000000000000000000000)
-#define SPI_FLAG_PX            (0b0000000000000000000000)
-#define SPI_FLAG_UX            (0b0000000000000000000000)
-#define SPI_FLAG_A             (0b0000000000000000000000)
-#define SPI_FLAG_W             (0b0000000000000000000000)
-#define SPI_FLAG_NNNN          (0b0000000000000000000000)
-#define SPI_FLAG_T             (0b0000000000000000000000)
-#define SPI_FLAG_R             (0b0000000000000000000000)
-#define SPI_FLAG_BBBBBB        (0b0000000000000000000000)
-#define SPI_FLAGS              (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
+#define SPI_CHANNEL              (0)
+#define SPI_BAUD                 (1000000)
+#define SPI_FLAG_MM              (0b0000000000000000000000)
+#define SPI_FLAG_PX              (0b0000000000000000000000)
+#define SPI_FLAG_UX              (0b0000000000000000000000)
+#define SPI_FLAG_A               (0b0000000000000000000000)
+#define SPI_FLAG_W               (0b0000000000000000000000)
+#define SPI_FLAG_NNNN            (0b0000000000000000000000)
+#define SPI_FLAG_T               (0b0000000000000000000000)
+#define SPI_FLAG_R               (0b0000000000000000000000)
+#define SPI_FLAG_BBBBBB          (0b0000000000000000000000)
+#define SPI_FLAGS                (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
 
-#define JOYSTICK_MIN           (0)
-#define JOYSTICK_MAX           (4095)
-#define JOYSTICK_MIDDLE        ((JOYSTICK_MIN + JOYSTICK_MAX) / 2)
-#define JOYSTICK_THRES         (5)
-#define JOYSTICK_DEC_THRES     ((3 * JOYSTICK_MAX) / 8)
-#define JOYSTICK_INC_THRES     ((5 * JOYSTICK_MAX) / 8)
-#define JOYSTICK_INIT_X        (JOYSTICK_MIDDLE)
-#define JOYSTICK_INIT_Y        (JOYSTICK_MIDDLE)
+#define JOYSTICK_MIN             (0)
+#define JOYSTICK_MAX             (4095)
+#define JOYSTICK_MIDDLE          ((JOYSTICK_MIN + JOYSTICK_MAX) / 2)
+#define JOYSTICK_THRES           (5)
+#define JOYSTICK_DEC_THRES       ((3 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_INC_THRES       ((5 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_INIT_X          (JOYSTICK_MIDDLE)
+#define JOYSTICK_INIT_Y          (JOYSTICK_MIDDLE)
 
-#define PWM_GPIO_PIN_X         (3)
-#define PWM_GPIO_PIN_Y         (2)
+#define PWM_GPIO_PIN_X           (3)
+#define PWM_GPIO_PIN_Y           (2)
 /* servo motors typically expect to be updated every 20 ms (50 Hz) with a pulse
    between 1 ms and 2 ms */
-#define PWM_GPIO_FREQ_HZ       (50)
-#define PWM_GPIO_RANGE_US      (1000000 / PWM_GPIO_FREQ_HZ)
-#define PWM_PULSEWIDTH_MIN_US  (1250) /* hardware minimum is 1000 us */
-#define PWM_PULSEWIDTH_MAX_US  (1750) /* hardware maximum is 2000 us */
-#define PWM_PULSEWIDTH_INIT_US ((PWM_PULSEWIDTH_MIN_US + PWM_PULSEWIDTH_MAX_US) / 2)
-#define PWM_PULSEWIDTH_STEP_US (10)
+#define PWM_GPIO_FREQ_HZ         (50)
+#define PWM_GPIO_RANGE_US        (1000000 / PWM_GPIO_FREQ_HZ)
+#define PWM_PULSEWIDTH_MIN_US    (1250) /* hardware minimum is 1000 us */
+#define PWM_PULSEWIDTH_MAX_US    (1750) /* hardware maximum is 2000 us */
+#define PWM_PULSEWIDTH_MIDDLE_US ((PWM_PULSEWIDTH_MIN_US + PWM_PULSEWIDTH_MAX_US) / 2)
+#define PWM_PULSEWIDTH_INIT_US   (PWM_PULSEWIDTH_MIDDLE_US)
+#define PWM_PULSEWIDTH_STEP_US   (10)
 
-#define USLEEP_DELAY           (2 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
+#define USLEEP_DELAY             (2 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
 
 /*
  * struct joystick_t
@@ -70,6 +72,14 @@ struct joystick_t {
 
 /* global variables */
 int fd_spi = 0;
+
+uint32_t read_joystick_x();
+uint32_t read_joystick_y();
+struct joystick_t read_joystick();
+void move_pan_tilt(struct joystick_t joystick);
+void my_handler(int signum);
+void initialize();
+void finalize();
 
 /*
  * read_joystick_x
@@ -140,8 +150,8 @@ uint32_t read_joystick_y() {
  * axis.
  */
 struct joystick_t read_joystick() {
-    static uint32_t saved_x = JOYSTICK_MIDDLE;
-    static uint32_t saved_y = JOYSTICK_MIDDLE;
+    static uint32_t saved_x = JOYSTICK_INIT_X;
+    static uint32_t saved_y = JOYSTICK_INIT_Y;
 
     uint32_t x_new = read_joystick_x();
     uint32_t y_new = read_joystick_y();
@@ -220,10 +230,20 @@ void move_pan_tilt(struct joystick_t joystick) {
 
 /*
  * initialize
+ *
+ * - Initializes the pigpio library
+ * - Opens an SPI file descriptor
+ * - Sets the PWM frequency
+ * - Sets the PWM range
  */
 void initialize() {
     if (gpioInitialise() < 0) {
         printf("Error: gpioInitialise() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (gpioSetSignalFunc(SIGINT, my_handler) == PI_BAD_SIGNUM) {
+        printf("Error: gpioSetSignalFunc() failed\n");
         exit(EXIT_FAILURE);
     }
 
@@ -259,6 +279,9 @@ void initialize() {
 
 /*
  * finalize
+ *
+ * - Closes the SPI file descriptor
+ * - Terminates the pigpio library
  */
 void finalize() {
     if (spiClose(fd_spi) != 0) {
@@ -269,6 +292,11 @@ void finalize() {
     gpioTerminate();
 }
 
+void my_handler(int signum) {
+    finalize();
+    exit(EXIT_SUCCESS);
+}
+
 int main(int argc, char **argv) {
     initialize();
 
@@ -277,7 +305,6 @@ int main(int argc, char **argv) {
         usleep(USLEEP_DELAY);
     }
 
-    finalize();
-
+    /* will never get here, but left for main() to correctly compile */
     return EXIT_SUCCESS;
 }
