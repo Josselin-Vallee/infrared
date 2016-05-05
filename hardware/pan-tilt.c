@@ -80,8 +80,9 @@ uint32_t read_joystick_x();
 uint32_t read_joystick_y();
 struct joystick_t read_joystick();
 void move_pan_tilt(struct joystick_t joystick);
-void initialize();
-void finalize();
+void setup_joystick();
+void setup_pwm();
+void initialize_pigpio();
 void int_handler(int signum);
 void joystick_button_isr(int gpio, int level, uint32_t tick);
 void handle_joystick_button_press();
@@ -234,20 +235,13 @@ void move_pan_tilt(struct joystick_t joystick) {
 }
 
 /*
- * initialize
+ * setup_joystick
  *
- * - Initializes the pigpio library
  * - Enable pull-up resistor for joystick button
  * - Opens an SPI file descriptor
- * - Sets the PWM frequency
- * - Sets the PWM range
+ * - Registers an interrupt for the joystick button press
  */
-void initialize() {
-    if (gpioInitialise() < 0) {
-        printf("Error: gpioInitialise() failed\n");
-        exit(EXIT_FAILURE);
-    }
-
+void setup_joystick() {
     /* create SPI handle */
     fd_spi = spiOpen(SPI_CHANNEL, SPI_BAUD, SPI_FLAGS);
     if (fd_spi < 0) {
@@ -262,6 +256,20 @@ void initialize() {
         exit(EXIT_FAILURE);
     }
 
+    /* register interrupt for joystick button press */
+    if (gpioSetISRFunc(JOYSTICK_BUTTON_GPIO_PIN, RISING_EDGE, 0, joystick_button_isr) != 0) {
+        printf("Error: gpioSetISRFunc() failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+ * setup_pwm
+ *
+ * - Sets the PWM frequency
+ * - Sets the PWM range
+ */
+void setup_pwm() {
     /* set PWM frequency */
     if (gpioSetPWMfrequency(PWM_GPIO_PIN_X, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
         printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_X\n");
@@ -288,27 +296,30 @@ void initialize() {
 }
 
 /*
- * finalize
+ * initialize_pigpio
  *
- * - Closes the SPI file descriptor
- * - Terminates the pigpio library
+ * Initializes the pigpio library
  */
-void finalize() {
+void initialize_pigpio() {
+    if (gpioInitialise() < 0) {
+        printf("Error: gpioInitialise() failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+ * int_handler
+ *
+ * Cleans up all open file handles and exits the program.
+ */
+void int_handler(int signum) {
     if (spiClose(fd_spi) != 0) {
         printf("Error: spiClose() failed\n");
         exit(EXIT_FAILURE);
     }
 
     gpioTerminate();
-}
 
-/*
- * int_handler
- *
- * Cleans up all open file handles and exits the program
- */
-void int_handler(int signum) {
-    finalize();
     exit(EXIT_SUCCESS);
 }
 
@@ -344,14 +355,13 @@ void handle_joystick_button_press() {
 
         /* send data to socket */
 
-
         /* enable future button presses */
         joystick_button_pressed_handling = false;
     }
 }
 
 int main(int argc, char **argv) {
-    initialize();
+    initialize_pigpio();
 
     /* register signal handler for SIGINT (ctrl+c) */
     if (gpioSetSignalFunc(SIGINT, int_handler) == PI_BAD_SIGNUM) {
@@ -359,11 +369,8 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    /* register interrupt for joystick button press */
-    if (gpioSetISRFunc(JOYSTICK_BUTTON_GPIO_PIN, RISING_EDGE, 0, joystick_button_isr) != 0) {
-        printf("Error: gpioSetISRFunc() failed\n");
-        exit(EXIT_FAILURE);
-    }
+    setup_joystick();
+    setup_pwm();
 
     while (true) {
         handle_joystick_button_press();
