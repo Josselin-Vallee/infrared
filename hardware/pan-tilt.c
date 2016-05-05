@@ -169,6 +169,9 @@ struct joystick_t read_joystick() {
 
 /*
  * move_pan_tilt
+ *
+ * Moving engine left is done by increasing pulsewidth, and moving engine right
+ * is done by decreasing pulsewidth
  */
 void move_pan_tilt(struct joystick_t joystick) {
     static uint32_t pulsewidth_x_us = PWM_PULSEWIDTH_INIT_US;
@@ -176,16 +179,16 @@ void move_pan_tilt(struct joystick_t joystick) {
 
     /* update x */
     if (JOYSTICK_INC_THRES < joystick.x) {
-        pulsewidth_x_us += PWM_PULSEWIDTH_STEP_US;
-    } else if (joystick.x < JOYSTICK_DEC_THRES) {
         pulsewidth_x_us -= PWM_PULSEWIDTH_STEP_US;
+    } else if (joystick.x < JOYSTICK_DEC_THRES) {
+        pulsewidth_x_us += PWM_PULSEWIDTH_STEP_US;
     }
 
     /* update y */
     if (JOYSTICK_INC_THRES < joystick.y) {
-        pulsewidth_y_us += PWM_PULSEWIDTH_STEP_US;
-    } else if (joystick.y < JOYSTICK_DEC_THRES) {
         pulsewidth_y_us -= PWM_PULSEWIDTH_STEP_US;
+    } else if (joystick.y < JOYSTICK_DEC_THRES) {
+        pulsewidth_y_us += PWM_PULSEWIDTH_STEP_US;
     }
 
     /* bound x */
@@ -201,9 +204,6 @@ void move_pan_tilt(struct joystick_t joystick) {
     } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_y_us) {
         pulsewidth_y_us = PWM_PULSEWIDTH_MAX_US;
     }
-
-    // printf("joystick.x = %04" PRIu32 ", joystick.y = %04" PRIu32 ", pulsewidth_x_us = %04" PRIu32 ", pulsewidth_y_us = %04" PRIu32 "\r", joystick.x, joystick.y, pulsewidth_x_us, pulsewidth_y_us);
-    // fflush(stdout);
 
     /* set PWM x */
     if (gpioServo(PWM_GPIO_PIN_X, pulsewidth_x_us) != 0) {
