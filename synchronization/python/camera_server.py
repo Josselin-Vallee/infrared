@@ -29,20 +29,18 @@ while True:
 
         while True:
             data = conn.recv(256)
-            if data:
-                print 'Capture time received from client:', data
-                
-                capture(float(data))
-                
-                print 'Sending image data to client...'
-                f = open('sent.jpg', 'rb')
+            print 'Capture time received from client:', data
+            
+            capture(float(data))
+            
+            print 'Sending image data to client...'
+            f = open('sent.jpg', 'rb')
+            data = f.read(4096)
+            while data:
+                conn.send(data)
                 data = f.read(4096)
-                while data:
-                    conn.send(data)
-                    data = f.read(4096)
-            else:
-                print 'Done sending image.'
-                break
+            print 'Done sending image.'
+            break
 
     finally:
         conn.close()

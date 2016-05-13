@@ -30,7 +30,7 @@ try:
     print 'Receiving image data from server...'
     f = open('received.jpg', 'wb')
     data = sock.recv(4096)
-    while data:
+    while len(data) > 0:
         f.write(data)
         data = sock.recv(4096)
 
