@@ -3,12 +3,21 @@
 import socket
 import sys
 import time
+import picamera
 
 # image capture stub
 def capture(capture_time):
     while time.time() < capture_time:
         pass
     print 'Capturing image at time', time.time()
+
+    with picamera.PiCamera() as camera:
+        camera.resolution = (2592, 1944)
+        camera.start_preview()
+        time.sleep(2)
+        camera.capture('nir.jpg', 'jpeg')
+        camera.stop_preview()
+
     return
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -34,7 +43,7 @@ while True:
             capture(float(data))
 
             print 'Sending image data to client...'
-            f = open('sent.jpg', 'rb')
+            f = open('nir.jpg', 'rb')
             data = f.read(4096)
             while data:
                 conn.send(data)
