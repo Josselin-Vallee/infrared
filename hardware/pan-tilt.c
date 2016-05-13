@@ -5,115 +5,381 @@
  * computational photography course.
  *
  * Compile with:
- *     gcc -std=gnu11 -o pan-tilt pan-tilt.c -lbcm2835;
+ *     gcc -std=gnu11 -Wall pan-tilt.c -o pan-tilt -pthread -lpigpio -lrt
+ *
+ * Run with:
+ *     export LD_LIBRARY_PATH="/home/alarm/PIGPIO"
+ *     ./pan-tilt
  *
  * Be sure to run as root!
  *
  * Author: Sahand Kashani-Akhavan [sahand.kashani-akhavan@epfl.ch]
  */
 
-#include <bcm2835.h>
+#include <pigpio.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 
-uint32_t read_vertical() {
-    /* read channel 0
-       ==============
-       tbuf[0] = 0b  0,  0,  0,  0,  0,  1,  1,  0
-       tbuf[1] = 0b  0,  0,  0,  0,  0,  0,  0,  0
-       tbuf[2] = 0b  0,  0,  0,  0,  0,  0,  0,  0
-       rbuf[0] = 0b  x,  x,  x,  x,  x,  x,  x,  x
-       rbuf[1] = 0b  x,  x,  x,  0,V11,V10, V9, V8
-       rbuf[2] = 0b V7, V6, V5, V4, V3, V2, V1, V0 */
+#define SPI_CHANNEL              (0)
+#define SPI_BAUD                 (1000000)
+#define SPI_FLAG_MM              (0b0000000000000000000000)
+#define SPI_FLAG_PX              (0b0000000000000000000000)
+#define SPI_FLAG_UX              (0b0000000000000000000000)
+#define SPI_FLAG_A               (0b0000000000000000000000)
+#define SPI_FLAG_W               (0b0000000000000000000000)
+#define SPI_FLAG_NNNN            (0b0000000000000000000000)
+#define SPI_FLAG_T               (0b0000000000000000000000)
+#define SPI_FLAG_R               (0b0000000000000000000000)
+#define SPI_FLAG_BBBBBB          (0b0000000000000000000000)
+#define SPI_FLAGS                (SPI_FLAG_MM | SPI_FLAG_PX | SPI_FLAG_UX | SPI_FLAG_A | SPI_FLAG_W | SPI_FLAG_NNNN | SPI_FLAG_T | SPI_FLAG_R | SPI_FLAG_BBBBBB)
 
-    /* transmit and receive buffers */
-    char tbuf[3];
-    char rbuf[3];
+#define JOYSTICK_MIN             (0)
+#define JOYSTICK_MAX             (4095)
+#define JOYSTICK_MIDDLE          ((JOYSTICK_MIN + JOYSTICK_MAX) / 2)
+#define JOYSTICK_THRES           (5)
+#define JOYSTICK_DEC_THRES       ((3 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_INC_THRES       ((5 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_INIT_X          (JOYSTICK_MIDDLE)
+#define JOYSTICK_INIT_Y          (JOYSTICK_MIDDLE)
+#define JOYSTICK_BUTTON_GPIO_PIN (25)
 
-    tbuf[0] = 0b00000110;
-    tbuf[1] = 0b00000000;
-    tbuf[2] = 0b00000000;
+#define PWM_GPIO_PIN_X           (3)
+#define PWM_GPIO_PIN_Y           (2)
+/* servo motors typically expect to be updated every 20 ms (50 Hz) with a pulse
+   between 1 ms and 2 ms */
+#define PWM_GPIO_FREQ_HZ         (50)
+#define PWM_GPIO_RANGE_US        (1000000 / PWM_GPIO_FREQ_HZ)
+#define PWM_PULSEWIDTH_MIN_US    (1250) /* hardware minimum is 1000 us */
+#define PWM_PULSEWIDTH_MAX_US    (1750) /* hardware maximum is 2000 us */
+#define PWM_PULSEWIDTH_MIDDLE_US ((PWM_PULSEWIDTH_MIN_US + PWM_PULSEWIDTH_MAX_US) / 2)
+#define PWM_PULSEWIDTH_INIT_US   (PWM_PULSEWIDTH_MIDDLE_US)
+#define PWM_PULSEWIDTH_STEP_US   (10)
 
-    bcm2835_spi_transfernb(tbuf, rbuf, 3);
+#define USLEEP_DELAY             (2 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
 
-    return ((rbuf[1] & 0xf) << 8) + rbuf[2];
-}
+/*
+ * struct joystick_t
+ *
+ * (x,y) tuple representing horizontal and vertical axis of joystick
+ */
+struct joystick_t {
+    uint32_t x;
+    uint32_t y;
+};
 
-uint32_t read_horizontal() {
+/* global variables */
+int fd_spi = 0;
+volatile bool joystick_button_pressed = false;
+volatile bool joystick_button_pressed_handling = false;
+
+uint32_t read_joystick_x();
+uint32_t read_joystick_y();
+struct joystick_t read_joystick();
+void move_pan_tilt(struct joystick_t joystick);
+void setup_joystick();
+void setup_pwm();
+void initialize_pigpio();
+void int_handler(int signum);
+void joystick_button_isr(int gpio, int level, uint32_t tick);
+void handle_joystick_button_press();
+
+/*
+ * read_joystick_x
+ *
+ * Returns the horizontal value of the joystick in the range [0, JOYSTICK_MAX],
+ * as reported by the ADC-converted value obtained from the joystick's VRx pin.
+ */
+uint32_t read_joystick_x() {
     /* read channel 1
        ==============
-       tbuf[0] = 0b  0,  0,  0,  0,  0,  1,  1,  0
-       tbuf[1] = 0b  0,  1,  0,  0,  0,  0,  0,  0
-       tbuf[2] = 0b  0,  0,  0,  0,  0,  0,  0,  0
+       txbuf[0] = 0b  0,  0,  0,  0,  0,  1,  1,  0
+       txbuf[1] = 0b  0,  1,  0,  0,  0,  0,  0,  0
+       txbuf[2] = 0b  0,  0,  0,  0,  0,  0,  0,  0
 
-       rbuf[0] = 0b  x,  x,  x,  x,  x,  x,  x,  x
-       rbuf[1] = 0b  x,  x,  x,  0,H11,H10, H9, H8
-       rbuf[2] = 0b H7, H6, H5, H4, H3, H2, H1, H0 */
+       rxbuf[0] = 0b  x,  x,  x,  x,  x,  x,  x,  x
+       rxbuf[1] = 0b  x,  x,  x,  0,H11,H10, H9, H8
+       rxbuf[2] = 0b H7, H6, H5, H4, H3, H2, H1, H0 */
 
     /* transmit and receive buffers */
-    char tbuf[3];
-    char rbuf[3];
+    char txbuf[3];
+    char rxbuf[3];
 
-    tbuf[0] = 0b00000110;
-    tbuf[1] = 0b01000000;
-    tbuf[2] = 0b00000000;
+    txbuf[0] = 0b00000110;
+    txbuf[1] = 0b01000000;
+    txbuf[2] = 0b00000000;
 
-    bcm2835_spi_transfernb(tbuf, rbuf, 3);
+    spiXfer(fd_spi, txbuf, rxbuf, 3);
 
-    return ((rbuf[1] & 0xf) << 8) + rbuf[2];
+    return ((rxbuf[1] & 0xf) << 8) + rxbuf[2];
+}
+
+/*
+ * read_joystick_y
+ *
+ * Returns the vertical value of the joystick in the range [0, JOYSTICK_MAX],
+ * as reported by the ADC-converted value obtained from the joystick's VRy pin.
+ */
+uint32_t read_joystick_y() {
+    /* read channel 0
+       ==============
+       txbuf[0] = 0b  0,  0,  0,  0,  0,  1,  1,  0
+       txbuf[1] = 0b  0,  0,  0,  0,  0,  0,  0,  0
+       txbuf[2] = 0b  0,  0,  0,  0,  0,  0,  0,  0
+
+       rxbuf[0] = 0b  x,  x,  x,  x,  x,  x,  x,  x
+       rxbuf[1] = 0b  x,  x,  x,  0,V11,V10, V9, V8
+       rxbuf[2] = 0b V7, V6, V5, V4, V3, V2, V1, V0 */
+
+    /* transmit and receive buffers */
+    char txbuf[3];
+    char rxbuf[3];
+
+    txbuf[0] = 0b00000110;
+    txbuf[1] = 0b00000000;
+    txbuf[2] = 0b00000000;
+
+    spiXfer(fd_spi, txbuf, rxbuf, 3);
+
+    return ((rxbuf[1] & 0xf) << 8) + rxbuf[2];
+}
+
+/*
+ * read_joystick
+ *
+ * Returns an (x,y) tuple containing the current value of the joystick as wanted
+ * by the user (i.e. rotated by 90° counter-clockwise). The returned value is
+ * only modified if the joystick has moved by more than JOYSTICK_THRES in each
+ * axis.
+ */
+struct joystick_t read_joystick() {
+    static uint32_t saved_x = JOYSTICK_INIT_X;
+    static uint32_t saved_y = JOYSTICK_INIT_Y;
+
+    uint32_t x_new = read_joystick_x();
+    uint32_t y_new = read_joystick_y();
+
+    /* stabilize joystick reading */
+    saved_x = (abs(x_new - saved_x) > JOYSTICK_THRES) ? x_new : saved_x;
+    saved_y = (abs(y_new - saved_y) > JOYSTICK_THRES) ? y_new : saved_y;
+
+    /*
+     * joystick is rotated 90° counter-clockwise, so need to remap x and y:
+     *
+     * |==========|==========|
+     * |  ACTUAL  |   WANT   |
+     * |==========|==========|
+     * |    x-    |    y+    |
+     * | y- oo y+ | x- oo x+ |
+     * |    x+    |    y-    |
+     * |==========|==========|
+     */
+    struct joystick_t res;
+    res.x = saved_y;
+    res.y = JOYSTICK_MAX - saved_x;
+    return res;
+}
+
+/*
+ * move_pan_tilt
+ *
+ * Moving engine left is done by increasing pulsewidth, and moving engine right
+ * is done by decreasing pulsewidth
+ */
+void move_pan_tilt(struct joystick_t joystick) {
+    static uint32_t pulsewidth_x_us = PWM_PULSEWIDTH_INIT_US;
+    static uint32_t pulsewidth_y_us = PWM_PULSEWIDTH_INIT_US;
+
+    /* update x */
+    if (JOYSTICK_INC_THRES < joystick.x) {
+        pulsewidth_x_us -= PWM_PULSEWIDTH_STEP_US;
+    } else if (joystick.x < JOYSTICK_DEC_THRES) {
+        pulsewidth_x_us += PWM_PULSEWIDTH_STEP_US;
+    }
+
+    /* update y */
+    if (JOYSTICK_INC_THRES < joystick.y) {
+        pulsewidth_y_us -= PWM_PULSEWIDTH_STEP_US;
+    } else if (joystick.y < JOYSTICK_DEC_THRES) {
+        pulsewidth_y_us += PWM_PULSEWIDTH_STEP_US;
+    }
+
+    /* bound x */
+    if (pulsewidth_x_us <= PWM_PULSEWIDTH_MIN_US) {
+        pulsewidth_x_us = PWM_PULSEWIDTH_MIN_US;
+    } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_x_us) {
+        pulsewidth_x_us = PWM_PULSEWIDTH_MAX_US;
+    }
+
+    /* bound y */
+    if (pulsewidth_y_us <= PWM_PULSEWIDTH_MIN_US) {
+        pulsewidth_y_us = PWM_PULSEWIDTH_MIN_US;
+    } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_y_us) {
+        pulsewidth_y_us = PWM_PULSEWIDTH_MAX_US;
+    }
+
+    /* set PWM x */
+    if (gpioServo(PWM_GPIO_PIN_X, pulsewidth_x_us) != 0) {
+        printf("Error: gpioServo() failed for PWM_GPIO_PIN_X\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* set PWM y */
+    if (gpioServo(PWM_GPIO_PIN_Y, pulsewidth_y_us) != 0) {
+        printf("Error: gpioServo() failed for PWM_GPIO_PIN_Y\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+ * setup_joystick
+ *
+ * - Enable pull-up resistor for joystick button
+ * - Opens an SPI file descriptor
+ * - Registers an interrupt for the joystick button press
+ */
+void setup_joystick() {
+    /* create SPI handle */
+    fd_spi = spiOpen(SPI_CHANNEL, SPI_BAUD, SPI_FLAGS);
+    if (fd_spi < 0) {
+        printf("Error: spiOpen() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Joystick is connected to GND when pressed, so we need a pull-up resistor
+       to detect changes in the SW signal */
+    if (gpioSetPullUpDown(JOYSTICK_BUTTON_GPIO_PIN, PI_PUD_UP) != 0) {
+        printf("Error: gpioSetPullUpDown() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* register interrupt for joystick button press */
+    if (gpioSetISRFunc(JOYSTICK_BUTTON_GPIO_PIN, RISING_EDGE, 0, joystick_button_isr) != 0) {
+        printf("Error: gpioSetISRFunc() failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+ * setup_pwm
+ *
+ * - Sets the PWM frequency
+ * - Sets the PWM range
+ */
+void setup_pwm() {
+    /* set PWM frequency */
+    if (gpioSetPWMfrequency(PWM_GPIO_PIN_X, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
+        printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_X\n");
+        exit(EXIT_FAILURE);
+    }
+    if (gpioSetPWMfrequency(PWM_GPIO_PIN_Y, PWM_GPIO_FREQ_HZ) == PI_BAD_USER_GPIO) {
+        printf("Error: gpioSetPWMfrequency() failed for PWM_GPIO_PIN_Y\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* set PWM range */
+    int retval = 0;
+    retval = gpioSetPWMrange(PWM_GPIO_PIN_X, PWM_GPIO_RANGE_US);
+    if ((retval == PI_BAD_USER_GPIO) || (retval == PI_BAD_DUTYRANGE)) {
+        printf("Error: gpioSetPWMrange() failed for PWM_GPIO_PIN_X\n");
+        exit(EXIT_FAILURE);
+    }
+
+    retval = gpioSetPWMrange(PWM_GPIO_PIN_Y, PWM_GPIO_RANGE_US);
+    if ((retval == PI_BAD_USER_GPIO) || (retval == PI_BAD_DUTYRANGE)) {
+        printf("Error: gpioSetPWMrange() failed for PWM_GPIO_PIN_Y\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+ * initialize_pigpio
+ *
+ * Initializes the pigpio library
+ */
+void initialize_pigpio() {
+    if (gpioInitialise() < 0) {
+        printf("Error: gpioInitialise() failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+ * int_handler
+ *
+ * Cleans up all open file handles and exits the program.
+ */
+void int_handler(int signum) {
+    if (spiClose(fd_spi) != 0) {
+        printf("Error: spiClose() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    gpioTerminate();
+
+    exit(EXIT_SUCCESS);
+}
+
+/*
+ * joystick_button_isr
+ *
+ * Interrupt service routine for the joystick button.
+ */
+void joystick_button_isr(int gpio, int level, uint32_t tick) {
+    /* only enable button press if previous button press is no longer being
+       handled (to avoid duplicate presses) */
+    if (!joystick_button_pressed_handling) {
+        joystick_button_pressed = true;
+    }
+}
+
+/*
+ * handle_joystick_button_press
+ *
+ * If a button press has occurred, then send a packet through a socket to inform
+ * the control program of the event.
+ */
+void handle_joystick_button_press() {
+    if (joystick_button_pressed) {
+        /* prevent multiple presses from being registered */
+        joystick_button_pressed_handling = true;
+
+        /* acknowledge button press */
+        joystick_button_pressed = false;
+
+        printf("button pressed\n");
+        fflush(stdout);
+
+        /* send data to socket */
+
+        /* enable future button presses */
+        joystick_button_pressed_handling = false;
+    }
 }
 
 int main(int argc, char **argv) {
-    if (!bcm2835_init()) {
-        printf("bcm2835_init failed. Be sure to run as root.\n");
-        return EXIT_FAILURE;
+    initialize_pigpio();
+
+    /* register signal handler for SIGINT (ctrl+c) */
+    if (gpioSetSignalFunc(SIGINT, int_handler) == PI_BAD_SIGNUM) {
+        printf("Error: gpioSetSignalFunc() failed\n");
+        exit(EXIT_FAILURE);
     }
 
-    /* setup SPI controller */
-    if (!bcm2835_spi_begin()) {
-        printf("bcm2835_spi_begin failed. Be sure to run as root.\n");
-        return EXIT_FAILURE;
-    }
+    setup_joystick();
+    setup_pwm();
 
-    /* 1 MHz SPI communication --> clock divider = 256 = 1.024us = 976.5625kHz */
-    bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);
-    bcm2835_spi_setDataMode(BCM2835_SPI_MODE0);
-    bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_256);
-    bcm2835_spi_chipSelect(BCM2835_SPI_CS0);
-    bcm2835_spi_setChipSelectPolarity(BCM2835_SPI_CS0, LOW);
-
-    uint32_t hx = 0;
-    uint32_t vx = 0;
-    uint32_t threshold = 100;
-
-    /* perform SPI communication */
     while (true) {
-        /* Control bit selections:
-           SGL/~DIFF = 1 (Single mode)
-           D2, D1, D0 = {0, 0, 0/1} (only 2 channels since 1 joystick) */
+        handle_joystick_button_press();
+        move_pan_tilt(read_joystick());
 
-        /* command format:
-           tbuf[0] = 0b  0, 0, 0, 0, 0, START,SGL,D2
-           tbuf[1] = 0b D1,D0, x, x, x,     x,  x, x
-           tbuf[2] = 0b  x, x, x, x, x,     x,  x, x */
-
-        uint32_t hx_new = read_horizontal();
-        uint32_t vx_new = read_vertical();
-
-        hx = (abs(hx_new - hx) > threshold) ? hx_new : hx;
-        vx = (abs(vx_new - vx) > threshold) ? vx_new : vx;
-
-        printf("hx = %04" PRIu32 ", vx = %04" PRIu32 "\r", hx, vx);
-        fflush(stdout);
-
-        usleep(250000);
+        /* sleep for some time to avoid the servo from moving too fast */
+        usleep(USLEEP_DELAY);
     }
 
-    bcm2835_spi_end();
-    bcm2835_close();
-
+    /* will never get here, but left for main() to correctly compile */
     return EXIT_SUCCESS;
 }
