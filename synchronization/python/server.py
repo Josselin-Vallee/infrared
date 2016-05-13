@@ -5,7 +5,8 @@ import sys
 import time
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-host = '192.168.1.13'
+#host = '192.168.1.13'
+host = '127.0.0.1'
 port = 1313
 sock.bind((host, port))
 sock.listen(10)
