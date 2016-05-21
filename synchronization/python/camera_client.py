@@ -1,48 +1,77 @@
 #!/usr/bin/python2
 
+import picamera
+import signal
 import socket
+import subprocess
 import sys
 import time
-import picamera
+
+# constants
+master = '192.168.1.13'
+slave = '192.168.1.14'
+host = slave
+port = 1313
+op_skin_smoothing = 'OP_SKIN_SMOOTHING'
+op_shadow_detection = 'OP_SHADOW_DETECTION'
+camera_resolution_horizontal = 2592
+camera_resolution_vertical = 1944
+nir_image_file = 'nir.jpg'
+rgb_image_file = 'rgb.jpg'
+
+def sigint_handler(signal, frame):
+    print('You pressed Ctrl+C!')
+    sys.exit(0)
 
 # image capture stub
-def capture(capture_time):
+def capture(capture_time, filename):
     while time.time() < capture_time:
         pass
+
     print 'Capturing image at time', time.time()
 
     with picamera.PiCamera() as camera:
-        camera.resolution = (2592, 1944)
+        camera.resolution = (camera_resolution_horizontal, camera_resolution_horizontal)
         camera.start_preview()
         time.sleep(2)
-        camera.capture('rgb.jpg', 'jpeg')
+        camera.capture(filename, 'jpeg')
         camera.stop_preview()
 
     return
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-host = '192.168.1.13'
-# host = '127.0.0.1'
-port = 1313
-sock.connect((host, port))
+def get_images():
+    # connect to server (who has the rgb camera)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((host, port))
 
-try:
-    # image capture time
-    value = time.time() + 1.0
-    data = repr(value)
+    try:
+        # image capture time (in future)
+        capture_time = time.time() + 1.0
 
-    print 'Sending capture time to server:', value
-    sock.sendall(data)
+        # sending capture time to server
+        sock.sendall(repr(capture_time))
 
-    capture(value)
+        # capture local image (in future as well)
+        capture(capture_time, nir_image_file)
 
-    print 'Receiving image data from server...'
-    f = open('nir.jpg', 'wb')
-    data = sock.recv(4096)
-    while len(data) > 0:
-        f.write(data)
+        print 'Receiving image data from server...'
+        f = open(rgb_image_file, 'wb')
         data = sock.recv(4096)
+        while len(data) > 0:
+            f.write(data)
+            data = sock.recv(4096)
 
-    print 'Done receiving image.'
-finally:
-    sock.close()
+        print 'Done receiving image.'
+
+    finally:
+        sock.close()
+
+
+# register signal handler
+signal.signal(signal.SIGINT, sigint_handler)
+
+# start pan-tilt subprocess and wait for completion
+pan_tilt_stdout, pan_tilt_stderr = subprocess.Popen(["/home/alarm/pan-tilt"], stdout=subprocess.PIPE).communicate()
+print "operation requested = " + pan_tilt_stdout
+
+get_images()

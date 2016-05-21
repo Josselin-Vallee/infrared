@@ -1,30 +1,46 @@
 #!/usr/bin/python2
 
+import picamera
+import signal
 import socket
 import sys
 import time
-import picamera
+
+# constants
+master = '192.168.1.13'
+slave = '192.168.1.14'
+host = slave
+port = 1313
+camera_resolution_horizontal = 2592
+camera_resolution_vertical = 1944
+rgb_image_file = 'rgb.jpg'
+
+def sigint_handler(signal, frame):
+    print('You pressed Ctrl+C!')
+    sys.exit(0)
 
 # image capture stub
 def capture(capture_time):
     while time.time() < capture_time:
         pass
+
     print 'Capturing image at time', time.time()
 
     with picamera.PiCamera() as camera:
-        camera.resolution = (2592, 1944)
+        camera.resolution = (camera_resolution_horizontal, camera_resolution_horizontal)
         camera.start_preview()
         time.sleep(2)
-        camera.capture('nir.jpg', 'jpeg')
+        camera.capture(rgb_image_file, 'jpeg')
         camera.stop_preview()
 
     return
 
+# register signal handler
+signal.signal(signal.SIGINT, sigint_handler)
+
+# create server socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-host = '192.168.1.13'
-# host = '127.0.0.1'
-port = 1313
 sock.bind((host, port))
 sock.listen(10)
 
@@ -43,7 +59,7 @@ while True:
             capture(float(data))
 
             print 'Sending image data to client...'
-            f = open('nir.jpg', 'rb')
+            f = open(rgb_image_file, 'rb')
             data = f.read(4096)
             while data:
                 conn.send(data)
