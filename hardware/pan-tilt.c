@@ -56,19 +56,18 @@
    between 1 ms and 2 ms */
 #define PWM_GPIO_FREQ_HZ         (50)
 #define PWM_GPIO_RANGE_US        (1000000 / PWM_GPIO_FREQ_HZ)
-#define PWM_PULSEWIDTH_MIN_US    (1250) /* hardware minimum is 1000 us */
-#define PWM_PULSEWIDTH_MAX_US    (1750) /* hardware maximum is 2000 us */
+#define PWM_PULSEWIDTH_MIN_US    (1125) /* hardware minimum is 1000 us */
+#define PWM_PULSEWIDTH_MAX_US    (1875) /* hardware maximum is 2000 us */
 #define PWM_PULSEWIDTH_MIDDLE_US ((PWM_PULSEWIDTH_MIN_US + PWM_PULSEWIDTH_MAX_US) / 2)
 #define PWM_PULSEWIDTH_INIT_US   (PWM_PULSEWIDTH_MIDDLE_US)
 #define PWM_PULSEWIDTH_STEP_US   (10)
 
 #define USLEEP_DELAY             (1 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
 
-#define FIFO_NAME                "/tmp/nir_project_fifo"
-
-/* 1 byte of data is sent over the fifo*/
-#define OP_SKIN_SMOOTHING        ((uint8_t) 0)
-#define OP_SHADOW_DETECTION      ((uint8_t) 1)
+#define OP_SKIN_SMOOTHING        (0)
+#define OP_SHADOW_DETECTION      (1)
+#define OP_SKIN_SMOOTHING_STR    "OP_SKIN_SMOOTHING"
+#define OP_SHADOW_DETECTION_STR  "OP_SHADOW_DETECTION"
 
 /*
  * struct joystick_t
@@ -82,7 +81,6 @@ struct joystick_t {
 
 /* global variables */
 int fd_spi = 0;
-int fd_fifo = 0;
 volatile bool joystick_button_pressed = false;
 volatile bool joystick_button_pressed_handling = false;
 
@@ -105,12 +103,12 @@ uint32_t move_pan_tilt_down(uint32_t pulsewidth_y_us);
 void move_pan_tilt();
 void setup_joystick();
 void setup_pwm();
-void setup_fifo();
 void initialize_pigpio();
+void cleanup();
 void int_handler(int signum);
 void joystick_button_isr(int gpio, int level, uint32_t tick);
 uint32_t button_press_operation();
-void handle_button_press();
+bool handle_button_press();
 
 /*
  * read_joystick_x
@@ -458,26 +456,6 @@ void setup_pwm() {
 }
 
 /*
- * setup_fifo
- *
- * Sets up a fifo
- */
-void setup_fifo() {
-    if (mkfifo(FIFO_NAME, 0666) == -1) {
-        printf("Error: mkfifo() failed\n");
-        exit(EXIT_FAILURE);
-    }
-
-    /* opening in O_RDWR instead of in O_WRONLY, because the open() call will
-     * block until another process opens the fifo for reading... */
-    fd_fifo = open(FIFO_NAME, O_RDWR);
-    if (fd_fifo == -1) {
-        printf("Error: open() failed\n");
-        exit(EXIT_FAILURE);
-    }
-}
-
-/*
  * initialize_pigpio
  *
  * Initializes the pigpio library
@@ -490,28 +468,26 @@ void initialize_pigpio() {
 }
 
 /*
- * int_handler
+ * cleanup
  *
- * Cleans up all open file handles and exits the program.
+ * Cleans up all open file handles.
  */
-void int_handler(int signum) {
+void cleanup() {
     if (spiClose(fd_spi) != 0) {
         printf("Error: spiClose() failed\n");
         exit(EXIT_FAILURE);
     }
 
-    if (close(fd_fifo) == -1) {
-        printf("Error: close() failed\n");
-        exit(EXIT_FAILURE);
-    }
-
-    if (unlink(FIFO_NAME) == -1) {
-        printf("Error: unlink() failed\n");
-        exit(EXIT_FAILURE);
-    }
-
     gpioTerminate();
+}
 
+/*
+ * int_handler
+ *
+ * Cleans up all open file handles and exits the program.
+ */
+void int_handler(int signum) {
+    cleanup();
     exit(EXIT_SUCCESS);
 }
 
@@ -521,11 +497,7 @@ void int_handler(int signum) {
  * Interrupt service routine for the joystick button.
  */
 void joystick_button_isr(int gpio, int level, uint32_t tick) {
-    /* only enable button press if previous button press is no longer being
-       handled (to avoid duplicate presses) */
-    if (!joystick_button_pressed_handling) {
-        joystick_button_pressed = true;
-    }
+    joystick_button_pressed = true;
 }
 
 /*
@@ -552,33 +524,29 @@ uint32_t button_press_operation() {
 /*
  * handle_button_press
  *
- * If a button press has occurred, then send a packet through a fifo to
- * inform the control program of the event.
+ * If a button press has occurred, then print the operation on stdout to
+ * inform the control program of the event, and return true. Otherwise, return
+ * false.
  */
-void handle_button_press() {
+bool handle_button_press() {
     if (joystick_button_pressed) {
-        /* prevent multiple presses from being registered */
-        joystick_button_pressed_handling = true;
-
-        /* acknowledge button press */
+        /* acknowledge button press (not really needed, but good practice) */
         joystick_button_pressed = false;
 
-        printf("button pressed\n");
-        fflush(stdout);
-
-        /* choose operation to send to server */
+        /* choose operation to send to calling process */
         uint32_t operation = button_press_operation();
 
-        /* send data to fifo */
-        uint8_t buf[1] = {operation};
-        write(fd_fifo, (void *) buf, sizeof(buf));
+        /* send data to stdout (calling process will retrieve and process it) */
+        if (operation == OP_SKIN_SMOOTHING) {
+            printf("%s", OP_SKIN_SMOOTHING_STR);
+        } else if (operation == OP_SHADOW_DETECTION) {
+            printf("%s", OP_SHADOW_DETECTION_STR);
+        }
 
-        /* sleep before exiting so the joystick has enough time to come back to its center position */
-        sleep(1);
-
-        /* enable future button presses */
-        joystick_button_pressed_handling = false;
+        return true;
     }
+
+    return false;
 }
 
 int main(int argc, char **argv) {
@@ -592,16 +560,17 @@ int main(int argc, char **argv) {
 
     setup_joystick();
     setup_pwm();
-    setup_fifo();
 
-    while (true) {
-        handle_button_press();
+    bool button_press_handled = false;
+    while (!button_press_handled) {
+        button_press_handled = handle_button_press();
         move_pan_tilt();
 
         /* sleep for some time to avoid the servo from moving too fast */
         usleep(USLEEP_DELAY);
     }
 
-    /* will never get here, but left for main() to correctly compile */
+    cleanup();
+
     return EXIT_SUCCESS;
 }
