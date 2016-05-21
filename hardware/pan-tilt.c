@@ -16,12 +16,15 @@
  * Author: Sahand Kashani-Akhavan [sahand.kashani-akhavan@epfl.ch]
  */
 
-#include <pigpio.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <pigpio.h>
 #include <signal.h>
 #include <stdbool.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #define SPI_CHANNEL              (0)
@@ -61,11 +64,11 @@
 
 #define USLEEP_DELAY             (1 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
 
-#define MASTER_IP_ADDR           "192.168.1.13"
-#define SLAVE_IP_ADDR            "192.168.1.14"
+#define FIFO_NAME                "/tmp/nir_project_fifo"
 
-#define OP_SKIN_SMOOTHING        (0)
-#define OP_SHADOW_DETECTION      (1)
+/* 1 byte of data is sent over the fifo*/
+#define OP_SKIN_SMOOTHING        ((uint8_t) 0)
+#define OP_SHADOW_DETECTION      ((uint8_t) 1)
 
 /*
  * struct joystick_t
@@ -79,6 +82,7 @@ struct joystick_t {
 
 /* global variables */
 int fd_spi = 0;
+int fd_fifo = 0;
 volatile bool joystick_button_pressed = false;
 volatile bool joystick_button_pressed_handling = false;
 
@@ -101,7 +105,7 @@ uint32_t move_pan_tilt_down(uint32_t pulsewidth_y_us);
 void move_pan_tilt();
 void setup_joystick();
 void setup_pwm();
-void setup_socket();
+void setup_fifo();
 void initialize_pigpio();
 void int_handler(int signum);
 void joystick_button_isr(int gpio, int level, uint32_t tick);
@@ -454,12 +458,23 @@ void setup_pwm() {
 }
 
 /*
- * setup_socket
+ * setup_fifo
  *
- * Sets up a TCP socket to the server.
+ * Sets up a fifo
  */
-void setup_socket() {
+void setup_fifo() {
+    if (mkfifo(FIFO_NAME, 0666) == -1) {
+        printf("Error: mkfifo() failed\n");
+        exit(EXIT_FAILURE);
+    }
 
+    /* opening in O_RDWR instead of in O_WRONLY, because the open() call will
+     * block until another process opens the fifo for reading... */
+    fd_fifo = open(FIFO_NAME, O_RDWR);
+    if (fd_fifo == -1) {
+        printf("Error: open() failed\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 /*
@@ -482,6 +497,16 @@ void initialize_pigpio() {
 void int_handler(int signum) {
     if (spiClose(fd_spi) != 0) {
         printf("Error: spiClose() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (close(fd_fifo) == -1) {
+        printf("Error: close() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (unlink(FIFO_NAME) == -1) {
+        printf("Error: unlink() failed\n");
         exit(EXIT_FAILURE);
     }
 
@@ -527,8 +552,8 @@ uint32_t button_press_operation() {
 /*
  * handle_button_press
  *
- * If a button press has occurred, then send a packet through a socket to inform
- * the control program of the event.
+ * If a button press has occurred, then send a packet through a fifo to
+ * inform the control program of the event.
  */
 void handle_button_press() {
     if (joystick_button_pressed) {
@@ -544,14 +569,12 @@ void handle_button_press() {
         /* choose operation to send to server */
         uint32_t operation = button_press_operation();
 
-        // /* send data to socket */
-        // int fd_sock = socket(AF_INET, SOCK_STREAM, 0);
-        // if (fd_sock < 0) {
-        //     error("ERROR opening socket");
-        // }
+        /* send data to fifo */
+        uint8_t buf[1] = {operation};
+        write(fd_fifo, (void *) buf, sizeof(buf));
 
-        // /* reduce chance of double button presses */
-        // sleep(1);
+        /* sleep before exiting so the joystick has enough time to come back to its center position */
+        sleep(1);
 
         /* enable future button presses */
         joystick_button_pressed_handling = false;
@@ -569,7 +592,7 @@ int main(int argc, char **argv) {
 
     setup_joystick();
     setup_pwm();
-    setup_socket();
+    setup_fifo();
 
     while (true) {
         handle_button_press();
