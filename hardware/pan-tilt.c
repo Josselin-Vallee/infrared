@@ -41,8 +41,8 @@
 #define JOYSTICK_MAX             (4095)
 #define JOYSTICK_MIDDLE          ((JOYSTICK_MIN + JOYSTICK_MAX) / 2)
 #define JOYSTICK_THRES           (5)
-#define JOYSTICK_DEC_THRES       ((3 * JOYSTICK_MAX) / 8)
-#define JOYSTICK_INC_THRES       ((5 * JOYSTICK_MAX) / 8)
+#define JOYSTICK_DEC_THRES       (1024)
+#define JOYSTICK_INC_THRES       (3072)
 #define JOYSTICK_INIT_X          (JOYSTICK_MIDDLE)
 #define JOYSTICK_INIT_Y          (JOYSTICK_MIDDLE)
 #define JOYSTICK_BUTTON_GPIO_PIN (25)
@@ -59,7 +59,10 @@
 #define PWM_PULSEWIDTH_INIT_US   (PWM_PULSEWIDTH_MIDDLE_US)
 #define PWM_PULSEWIDTH_STEP_US   (10)
 
-#define USLEEP_DELAY             (2 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
+#define USLEEP_DELAY             (1 * PWM_GPIO_RANGE_US) /* MUST be a multiple of PWM_GPIO_RANGE_US to avoid modifying the servo when it isn't expecting it */
+
+#define MASTER_IP_ADDR           "192.168.1.13"
+#define SLAVE_IP_ADDR            "192.168.1.14"
 
 /*
  * struct joystick_t
@@ -79,13 +82,22 @@ volatile bool joystick_button_pressed_handling = false;
 uint32_t read_joystick_x();
 uint32_t read_joystick_y();
 struct joystick_t read_joystick();
+bool is_joystick_left(struct joystick_t joystick);
+bool is_joystick_right(struct joystick_t joystick);
+bool is_joystick_up(struct joystick_t joystick);
+bool is_joystick_down(struct joystick_t joystick);
+bool is_joystick_centered(struct joystick_t joystick);
+uint32_t move_pan_tilt_left(uint32_t pulsewidth_x_us);
+uint32_t move_pan_tilt_right(uint32_t pulsewidth_x_us);
+uint32_t move_pan_tilt_up(uint32_t pulsewidth_y_us);
+uint32_t move_pan_tilt_down(uint32_t pulsewidth_y_us);
 void move_pan_tilt(struct joystick_t joystick);
 void setup_joystick();
 void setup_pwm();
 void initialize_pigpio();
 void int_handler(int signum);
 void joystick_button_isr(int gpio, int level, uint32_t tick);
-void handle_joystick_button_press();
+void handle_button_press(struct joystick_t joystick);
 
 /*
  * read_joystick_x
@@ -184,6 +196,104 @@ struct joystick_t read_joystick() {
 }
 
 /*
+ * is_joystick_left
+ *
+ * Returns true if the joystick is pointing left, and false otherwise. Note that
+ * it is possible for the joystick to also be pointing up or down!
+ */
+bool is_joystick_left(struct joystick_t joystick) {
+    if (joystick.x < JOYSTICK_DEC_THRES) {
+        return true;
+    }
+    return false;
+}
+
+/*
+ * is_joystick_right
+ *
+ * Returns true if the joystick is pointing right, and false otherwise. Note that
+ * it is possible for the joystick to also be pointing up or down!
+ */
+bool is_joystick_right(struct joystick_t joystick) {
+    if (JOYSTICK_INC_THRES < joystick.x) {
+        return true;
+    }
+    return false;
+}
+
+/*
+ * is_joystick_up
+ *
+ * Returns true if the joystick is pointing up, and false otherwise. Note that
+ * it is possible for the joystick to also be pointing left or right!
+ */
+bool is_joystick_up(struct joystick_t joystick) {
+    if (JOYSTICK_INC_THRES < joystick.y) {
+        return true;
+    }
+    return false;
+}
+
+/*
+ * is_joystick_down
+ *
+ * Returns true if the joystick is pointing down, and false otherwise. Note that
+ * it is possible for the joystick to also be pointing left or right!
+ */
+bool is_joystick_down(struct joystick_t joystick) {
+    if (joystick.y < JOYSTICK_DEC_THRES) {
+        return true;
+    }
+    return false;
+}
+
+/*
+ * is_joystick_centered
+ *
+ * Returns true if the joystick is centered, and false otherwise.
+ */
+bool is_joystick_centered(struct joystick_t joystick) {
+    return !is_joystick_left(joystick) && !is_joystick_right(joystick) &&
+           !is_joystick_up(joystick)   && !is_joystick_down(joystick);
+}
+
+/*
+ * move_pan_tilt_left
+ *
+ * Returns the updated horizontal position of the pan-tilt module.
+ */
+uint32_t move_pan_tilt_left(uint32_t pulsewidth_x_us) {
+    return pulsewidth_x_us += PWM_PULSEWIDTH_STEP_US;
+}
+
+/*
+ * move_pan_tilt_right
+ *
+ * Returns the updated horizontal position of the pan-tilt module.
+ */
+uint32_t move_pan_tilt_right(uint32_t pulsewidth_x_us) {
+    return pulsewidth_x_us -= PWM_PULSEWIDTH_STEP_US;
+}
+
+/*
+ * move_pan_tilt_up
+ *
+ * Returns the updated vertical position of the pan-tilt module.
+ */
+uint32_t move_pan_tilt_up(uint32_t pulsewidth_y_us) {
+    return pulsewidth_y_us -= PWM_PULSEWIDTH_STEP_US;
+}
+
+/*
+ * move_pan_tilt_down
+ *
+ * Returns the updated vertical position of the pan-tilt module.
+ */
+uint32_t move_pan_tilt_down(uint32_t pulsewidth_y_us) {
+    return pulsewidth_y_us += PWM_PULSEWIDTH_STEP_US;
+}
+
+/*
  * move_pan_tilt
  *
  * Moving engine left is done by increasing pulsewidth, and moving engine right
@@ -193,32 +303,32 @@ void move_pan_tilt(struct joystick_t joystick) {
     static uint32_t pulsewidth_x_us = PWM_PULSEWIDTH_INIT_US;
     static uint32_t pulsewidth_y_us = PWM_PULSEWIDTH_INIT_US;
 
-    /* update x */
-    if (JOYSTICK_INC_THRES < joystick.x) {
-        pulsewidth_x_us -= PWM_PULSEWIDTH_STEP_US;
-    } else if (joystick.x < JOYSTICK_DEC_THRES) {
-        pulsewidth_x_us += PWM_PULSEWIDTH_STEP_US;
-    }
+    /* modify pan-tilt position only if joystick is not centered */
+    if (!is_joystick_centered(joystick)) {
+        /* update x & y */
+        if (is_joystick_left(joystick)) { /* update x */
+            pulsewidth_x_us = move_pan_tilt_left(pulsewidth_x_us);
+        } else if (is_joystick_right(joystick)) {
+            pulsewidth_x_us = move_pan_tilt_right(pulsewidth_x_us);
+        } else if (is_joystick_up(joystick)) { /* update y */
+            pulsewidth_y_us = move_pan_tilt_up(pulsewidth_y_us);
+        } else if (is_joystick_down(joystick)) {
+            pulsewidth_y_us = move_pan_tilt_down(pulsewidth_y_us);
+        }
 
-    /* update y */
-    if (JOYSTICK_INC_THRES < joystick.y) {
-        pulsewidth_y_us -= PWM_PULSEWIDTH_STEP_US;
-    } else if (joystick.y < JOYSTICK_DEC_THRES) {
-        pulsewidth_y_us += PWM_PULSEWIDTH_STEP_US;
-    }
+        /* bound x */
+        if (pulsewidth_x_us <= PWM_PULSEWIDTH_MIN_US) {
+            pulsewidth_x_us = PWM_PULSEWIDTH_MIN_US;
+        } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_x_us) {
+            pulsewidth_x_us = PWM_PULSEWIDTH_MAX_US;
+        }
 
-    /* bound x */
-    if (pulsewidth_x_us <= PWM_PULSEWIDTH_MIN_US) {
-        pulsewidth_x_us = PWM_PULSEWIDTH_MIN_US;
-    } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_x_us) {
-        pulsewidth_x_us = PWM_PULSEWIDTH_MAX_US;
-    }
-
-    /* bound y */
-    if (pulsewidth_y_us <= PWM_PULSEWIDTH_MIN_US) {
-        pulsewidth_y_us = PWM_PULSEWIDTH_MIN_US;
-    } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_y_us) {
-        pulsewidth_y_us = PWM_PULSEWIDTH_MAX_US;
+        /* bound y */
+        if (pulsewidth_y_us <= PWM_PULSEWIDTH_MIN_US) {
+            pulsewidth_y_us = PWM_PULSEWIDTH_MIN_US;
+        } else if (PWM_PULSEWIDTH_MAX_US <= pulsewidth_y_us) {
+            pulsewidth_y_us = PWM_PULSEWIDTH_MAX_US;
+        }
     }
 
     /* set PWM x */
@@ -337,12 +447,12 @@ void joystick_button_isr(int gpio, int level, uint32_t tick) {
 }
 
 /*
- * handle_joystick_button_press
+ * handle_button_press
  *
  * If a button press has occurred, then send a packet through a socket to inform
  * the control program of the event.
  */
-void handle_joystick_button_press() {
+void handle_button_press(struct joystick_t joystick) {
     if (joystick_button_pressed) {
         /* prevent multiple presses from being registered */
         joystick_button_pressed_handling = true;
@@ -353,7 +463,34 @@ void handle_joystick_button_press() {
         printf("button pressed\n");
         fflush(stdout);
 
-        /* send data to socket */
+        // while (true) {
+        //     if (is_joystick_centered(joystick)) {
+        //         printf("center\n");
+        //     } else if (is_joystick_left(joystick)) {
+        //         printf("left\n");
+        //     } else if (is_joystick_right(joystick)) {
+        //         printf("right\n");
+        //     } else if (is_joystick_up(joystick)) {
+        //         printf("up\n");
+        //     } else if (is_joystick_down(joystick)) {
+        //         printf("down\n");
+        //     }
+        //     usleep(100000);
+        // }
+
+        // bool option_selected = false;
+        // while (!option_selected) {
+
+        // }
+
+        // /* send data to socket */
+        // int fd_sock = socket(AF_INET, SOCK_STREAM, 0);
+        // if (fd_sock < 0) {
+        //     error("ERROR opening socket");
+        // }
+
+        // /* reduce chance of double button presses */
+        // sleep(1);
 
         /* enable future button presses */
         joystick_button_pressed_handling = false;
@@ -373,8 +510,10 @@ int main(int argc, char **argv) {
     setup_pwm();
 
     while (true) {
-        handle_joystick_button_press();
-        move_pan_tilt(read_joystick());
+        struct joystick_t joystick = read_joystick();
+
+        handle_button_press(joystick);
+        move_pan_tilt(joystick);
 
         /* sleep for some time to avoid the servo from moving too fast */
         usleep(USLEEP_DELAY);
