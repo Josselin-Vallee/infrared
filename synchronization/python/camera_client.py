@@ -1,11 +1,16 @@
 #!/usr/bin/python2
 
+import cv2
 import picamera
 import signal
 import socket
 import subprocess
 import sys
 import time
+
+import registration
+import merging
+import shadow_detection
 
 # constants
 master = '192.168.1.13'
@@ -18,6 +23,9 @@ camera_resolution_horizontal = 2592
 camera_resolution_vertical = 1944
 nir_image_file = 'nir.jpg'
 rgb_image_file = 'rgb.jpg'
+rgb_registered_image_file = 'rgb_registered.jpg'
+skin_smoothing_image_file = 'skin_smoothing.jpg'
+shadow_detection_image_file = 'shadow_detection.jpg'
 
 def sigint_handler(signal, frame):
     print('You pressed Ctrl+C!')
@@ -75,3 +83,14 @@ pan_tilt_stdout, pan_tilt_stderr = subprocess.Popen(["/home/alarm/pan-tilt"], st
 print "operation requested = " + pan_tilt_stdout
 
 get_images()
+
+rgb_registered = registration.register(rgb_image_file, nir_image_file)
+cv2.imwrite(rgb_registered_image_file, rgb_registered)
+
+if pan_tilt_stdout == op_skin_smoothing:
+    final_image = merging.merge(rgb_registered_image_file, nir_image_file)
+    cv2.imwrite(skin_smoothing_image_file, final_image)
+
+elif pan_tilt_stdout == op_shadow_detection:
+    final_image = shadow_detection.shadowDetection(rgb_registered_image_file, nir_image_file)
+

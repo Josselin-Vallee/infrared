@@ -20,7 +20,7 @@ def sigint_handler(signal, frame):
     sys.exit(0)
 
 # image capture stub
-def capture(capture_time):
+def capture(capture_time, filename):
     while time.time() < capture_time:
         pass
 
@@ -30,7 +30,7 @@ def capture(capture_time):
         camera.resolution = (camera_resolution_horizontal, camera_resolution_horizontal)
         camera.start_preview()
         time.sleep(2)
-        camera.capture(rgb_image_file, 'jpeg')
+        camera.capture(filename, 'jpeg')
         camera.stop_preview()
 
     return
@@ -53,10 +53,12 @@ while True:
         print 'Accepted connection from', addr
 
         while True:
-            data = conn.recv(256)
-            print 'Capture time received from client:', data
+            # receive image capture time (in future) from client
+            capture_time = float(conn.recv(256))
+            print 'Capture time received from client:', capture_time
 
-            capture(float(data))
+            # capture local image (in future)
+            capture(capture_time, rgb_image_file)
 
             print 'Sending image data to client...'
             f = open(rgb_image_file, 'rb')
