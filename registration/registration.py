@@ -11,7 +11,7 @@ def register(rgb, nir):
 	rgb = numpy.array(image1.convert("L"))
 
 	image2 = Image.open(nir)
-	nir = numpy.array(image2.convert("L"))
+	nir = numpy.array(image2) #.convert("L"))
 
 	# Detect keypoint using SIFT
 	detectKP =cv2.SIFT(0, 3, 0.08, 10, 1.6)
@@ -52,7 +52,7 @@ def register(rgb, nir):
 	im_out = cv2.warpPerspective(rgb, M, (nir.shape[1],nir.shape[0]))
 
 	return im_out
-     
+
 # Display images
 # cv2.imshow("Source Image", rgb)
 # cv2.imshow("Destination Image", nir)

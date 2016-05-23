@@ -11,8 +11,8 @@ master = '192.168.1.13'
 slave = '192.168.1.14'
 host = slave
 port = 1313
-camera_resolution_horizontal = 2592
-camera_resolution_vertical = 1944
+camera_resolution_horizontal = 1296
+camera_resolution_vertical = 972
 rgb_image_file = 'rgb.jpg'
 
 def sigint_handler(signal, frame):

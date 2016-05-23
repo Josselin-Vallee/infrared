@@ -1,12 +1,14 @@
 #!/usr/bin/python2
 
 import cv2
+import numpy
 import picamera
 import signal
 import socket
 import subprocess
 import sys
 import time
+import scipy.misc
 
 import registration
 import merging
@@ -19,8 +21,8 @@ host = slave
 port = 1313
 op_skin_smoothing = 'OP_SKIN_SMOOTHING'
 op_shadow_detection = 'OP_SHADOW_DETECTION'
-camera_resolution_horizontal = 2592
-camera_resolution_vertical = 1944
+camera_resolution_horizontal = 1296
+camera_resolution_vertical = 972
 nir_image_file = 'nir.jpg'
 rgb_image_file = 'rgb.jpg'
 rgb_registered_image_file = 'rgb_registered.jpg'
@@ -84,6 +86,11 @@ print "operation requested = " + pan_tilt_stdout
 
 get_images()
 
+# convert nir image to grayscale
+cv2.imwrite(nir_image_file, cv2.cvtColor(cv2.imread(nir_image_file), cv2.COLOR_BGR2GRAY))
+# find a way to increase luminosity of above image!
+
+# registration
 rgb_registered = registration.register(rgb_image_file, nir_image_file)
 cv2.imwrite(rgb_registered_image_file, rgb_registered)
 
@@ -93,4 +100,4 @@ if pan_tilt_stdout == op_skin_smoothing:
 
 elif pan_tilt_stdout == op_shadow_detection:
     final_image = shadow_detection.shadowDetection(rgb_registered_image_file, nir_image_file)
-
+    cv2.imwrite(shadow_detection_image_file, final_image)

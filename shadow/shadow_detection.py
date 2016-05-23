@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import misc
 
 # Parameters for the non-linear mapping
 alpha = 14
@@ -23,6 +24,9 @@ def im2double(i):
 
 def shadowDetection(rgb, nir):
     # Perform the shadow detection algorithm to a pair of rgb and nir images
+
+    rgb = misc.imread(rgb)
+    nir = misc.imread(nir)
 
     rgb = im2double(rgb)
     nir = im2double(nir)
