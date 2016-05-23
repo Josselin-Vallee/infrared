@@ -3,7 +3,7 @@ from PIL import Image
 import pylab
 import numpy
 import cv2
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 def register(rgb, nir):
 	# Open image and convert it to byte images (instead of RGB)
