@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def merge(rgb, nir)
+def merge(rgb, nir):
 	#import RGB image
 	rgb = cv2.imread(rgb, 3)
 	#import NIR image
