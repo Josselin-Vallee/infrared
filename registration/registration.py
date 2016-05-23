@@ -1,6 +1,7 @@
-import PIL
-from PIL import Image
-import pylab
+
+
+# import PIL
+# from PIL import Image
 import numpy
 import cv2
 # import matplotlib.pyplot as plt
@@ -9,11 +10,20 @@ def register(rgb, nir):
 	# Open image and convert it to byte images (instead of RGB)
 	# Array of arrays with pixel values 0-255
 	# First element (array) is all the pixels in the first row of the image (1024 px)
-	image1 = Image.open(rgb)
-	rgb = numpy.array(image1.convert("L"))
+	# image1 = Image.open(rgb)
+	# rgb = numpy.array(image1.convert("L"))
 
-	image2 = Image.open(nir)
-	nir = numpy.array(image2.convert("L"))
+	# image2 = Image.open(nir)
+	# nir = numpy.array(image2.convert("L"))
+
+
+	#import RGB image
+	rgb = cv2.imread(rgb, 3)
+	#import NIR image
+	nir = cv2.imread(nir, 3)
+	#Convert RGB image into YCbCr
+	rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2YCR_CB)
+	nir = cv2.cvtColor(nir, cv2.COLOR_BGR2YCR_CB)
 
 	# Detect keypoint using SIFT
 	detectKP =cv2.SIFT(0, 3, 0.08, 10, 1.6)
@@ -51,9 +61,13 @@ def register(rgb, nir):
 	# Warp source image to destination based on homography
 	im_out = cv2.warpPerspective(rgb, M, (nir.shape[1],nir.shape[0]))
 
+	#convert to RGB
+	im_out = cv2.cvtColor(im_out, cv2.COLOR_YCR_CB2BGR)
+
 	return im_out
 
-
+out = register("lake_rgb.tiff", "lake_nir.tiff")
+cv2.imwrite("output.jpg", out)
      
 # Display images
 # cv2.imshow("Source Image", rgb)
