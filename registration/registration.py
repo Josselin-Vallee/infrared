@@ -8,13 +8,13 @@ def register(rgb, nir):
 	# Array of arrays with pixel values 0-255
 	# First element (array) is all the pixels in trgbhe first row of the image (1024 px)
 	image1 = Image.open(rgb)
-	rgb = numpy.array(image1.convert("L"))
+	rgb = numpy.array(image1)
 
 	image2 = Image.open(nir)
-	nir = numpy.array(image2) #.convert("L"))
+	nir = numpy.array(image2.convert("L"))
 
 	# Detect keypoint using SIFT
-	detectKP =cv2.SIFT(0, 3, 0.08, 10, 1.6)
+	detectKP =cv2.SIFT(0, 3, 0.04, 30, 1.6)
 	kp_rgb = detectKP.detect(rgb)
 	kp_nir = detectKP.detect(nir)
 
@@ -46,7 +46,7 @@ def register(rgb, nir):
 	src_pts = numpy.float32([ k1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
 	dst_pts = numpy.float32([ k2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
-	M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+	M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,3.0)
 
 	# Warp source image to destination based on homography
 	im_out = cv2.warpPerspective(rgb, M, (nir.shape[1],nir.shape[0]))

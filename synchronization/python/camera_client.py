@@ -21,12 +21,12 @@ host = slave
 port = 1313
 op_skin_smoothing = 'OP_SKIN_SMOOTHING'
 op_shadow_detection = 'OP_SHADOW_DETECTION'
-camera_resolution_horizontal = 1296
-camera_resolution_vertical = 972
+camera_resolution_horizontal = 640
+camera_resolution_vertical = 480
 nir_image_file = 'nir.jpg'
 rgb_image_file = 'rgb.jpg'
 nir_normalized_image_file = 'nir_normalized.jpg'
-rgb_registered_image_file = 'rgb_registered.jpg'
+nir_registered_image_file = 'nir_registered.jpg'
 skin_smoothing_image_file = 'skin_smoothing.jpg'
 shadow_detection_image_file = 'shadow_detection.jpg'
 
@@ -98,19 +98,19 @@ print "operation requested = " + pan_tilt_stdout
 
 get_images()
 
+# convert nir image to grayscale
 cv2.imwrite(nir_normalized_image_file, normalize(nir_image_file))
 
-# convert nir image to grayscale
-# find a way to increase luminosity of above image!
+# registration
+nir_registered = registration.register(nir_normalized_image_file, rgb_image_file)
+# nir_registered = registration.register('01_nir.tiff', '01_rgb.tiff')
+cv2.imwrite(nir_registered_image_file, nir_registered)
 
-# # registration
-# rgb_registered = registration.register(rgb_image_file, nir_image_file)
-# cv2.imwrite(rgb_registered_image_file, rgb_registered)
 
-# if pan_tilt_stdout == op_skin_smoothing:
-#     final_image = merging.merge(rgb_registered_image_file, nir_image_file)
-#     cv2.imwrite(skin_smoothing_image_file, final_image)
+if pan_tilt_stdout == op_skin_smoothing:
+    final_image = merging.merge(rgb_image_file, nir_image_file)
+    cv2.imwrite(skin_smoothing_image_file, final_image)
 
-# elif pan_tilt_stdout == op_shadow_detection:
-#     final_image = shadow_detection.shadowDetection(rgb_registered_image_file, nir_image_file)
-#     cv2.imwrite(shadow_detection_image_file, final_image)
+elif pan_tilt_stdout == op_shadow_detection:
+    final_image = shadow_detection.shadowDetection(rgb_image_file, nir_image_file)
+    cv2.imwrite(shadow_detection_image_file, final_image)
