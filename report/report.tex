@@ -1,33 +1,39 @@
-\documentclass[11pt, a4paper]{article}
+\documentclass[11pt]{article}
 
 \usepackage{amsthm,amsmath,amssymb}
+
 \usepackage[
     colorlinks = true,
     linkcolor = blue,
     urlcolor = blue,
     citecolor = magenta,
 ]{hyperref}
-\usepackage[
-    backend = bibtex,
-    sorting = none
-]{biblatex}
-\bibliography{references}
+
 \usepackage{graphicx}
 
-\title{Near-Infrared Imaging}
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=20mm,
+    right=20mm,
+    top=20mm,
+    bottom=20mm
+}
 
-% in alphabetical order
+\title{Near Infrared Imaging}
+
 \author{
     \href{mailto:dajana.vlajic@epfl.ch}{Dajana Vlajic} \and
     \href{mailto:florian.zimmermann@epfl.ch}{Florian Zimmermann} \and
     \href{mailto:josselin.vallee@epfl.ch}{Josselin Vallee} \and
-    \href{mailto:rebecka.ronnback@epfl.ch}{Rebecka Rönnbäck} \and
+    \href{mailto:rebecka.ronnback@epfl.ch}{Rebecka R{\H o}nnb{\"a}ck} \and
     \href{mailto:sahand.kashani-akhavan@epfl.ch}{Sahand Kashani} \and
     \href{mailto:yann.perret@epfl.ch}{Yann Perret}
 }
 
-
 \date{\today}
+
+\setlength{\parindent}{0pt}
 
 \newcommand{\tra}{\mathsf{T}}
 
@@ -36,49 +42,207 @@
 
 \begin{section}{Introduction}
     \label{sec:introduction}
+    Silicon sensors commonly used for photographic purposes are naturally sensitive to a wide band of the light spectrum. This band contains both \emph{visible} light (RGB, 390-700 nm), and \emph{Near-infrared} light (NIR, 700-1100 nm).
 
-    % everyone ?
+    \medskip
+
+    As the human visual system is only sensitive to visible light, camera manufacturers have traditionally covered their sensors with a filter that blocks out all NIR light, therefore preventing radiation outside the RGB band from affecting the sensor's output.
+
+    \medskip
+
+    % insert citation here
+    However, recent work has shown that combining the information contained in both the RGB and NIR bands of the light spectrum is beneficial for various image enhancement algorithms, as it allows one to extract more accurate information about the scene. For example, the combined use of RGB- and NIR-based imagery was used in [1] for skin smoothing, [2] for detecting shadows in scenes, and [3] for image dehazing.
+
+    \medskip
+
+    In this project, we sought to verify some of these results experimentally. To this end, we put together a custom camera setup and implemented a few of the aforementioned image enhancement algorithms. We present our setup and results below.
+
+    % Near-infrared is in the electromagnetic spectrum from 700 nm to 1100 nm, whereas RGB is in the spectrum of 400 nm to 700 nm. The human vision lies in the spectrum of 390 nm to 700 nm. Two cameras have been used for taking simultaneous NIR- and RGB images. Due to the different perspective of the images, caused by the distance between the cameras, registration and merging was performed. The result is an image with enhanced visual quality and more extracted information.
 \end{section}
 
-\begin{section}{Hardware}
-    \label{sec:hardware}
+% \begin{section}{Project Goal}
+%     % I think the goals are clear in the introduction, no ?
+%     \label{sec:project_goal}
+%     The project aims at combining the visible RGB with the NIR to enhance the visual  quality of images. It also will extract more accurate information about the scene.
 
-    % sahand
-\end{section}
+%     The project consist of 5 parts
+%     \begin{itemize}
+%         \item Preparation of Raspberry Pi
+%     \end{itemize}
+%     \begin{itemize}
+%         \item  Preparation of the cameras in stereo setup
+%     \end{itemize}
+%     \begin{itemize}
+%         \item Registration algorithm to align the captured images
+%     \end{itemize}
+%     \begin{itemize}
+%         \item Merging algorithm to combine RGB and NIR
+%     \end{itemize}
+%     \begin{itemize}
+%         \item Extra?
+%     \end{itemize}
+% \end{section}
 
-\begin{section}{Synchronization}
-    \label{sec:synchronization}
+\begin{section}{Image acquisition}
+    The main problem with NIR imaging is actually the acquisition process:
 
-    % florian
-\end{section}
+    \medskip
+
+    The image processing algorithms presented earlier take as inputs both an RGB and an NIR image. These images must have been taken \emph{simultaneously} to avoid any temporal shift in the scene, and need to be \emph{aligned} in such a way that a pixel in the RGB image and the corresponding pixel (located at the same coordinates) in the NIR image both measure the same position within the captured scene.
+
+    \medskip
+
+    Capturing 2 images simultaneously is not easily possible with a single camera, so the acquisition of distinct RGB and NIR images is generally performed with a dual-camera setup. Although the cameras are facing the exact same scene, we will always observe a slight shift between the 2 captured images. This is normal as mechanical constraints make it impossible for the 2 cameras to capture the exact same light beams.
+
+    \medskip
+
+    Unfortunately, this creates an issue for dual-picture image processing algorithms. Indeed, the algorithms presented earlier are adaptive and take advantage of locality within a scene for better results. The fact that the RGB and NIR images are not aligned causes incorrect ``local'' information to be used, therefore resulting in unpleasant outputs.
+
+    \medskip
+
+    So the first step of any NIR imagery is to solve the acquisition problem.
+
+    \begin{subsection}{Hardware Setup}
+        \label{sec:hardware}
+
+        Obtaining 2 identical cameras that are available with and without an NIR filter is more difficult than it seems. Thankfully such cameras exist for the Raspberry Pi (RPi) embedded system, so we chose this board for our setup.
+
+        \medskip
+
+        The RPi can only be connected to one camera, so we will use 2 such devices in order to connect our RGB and NIR cameras.
+
+        \begin{subsubsection}{Dual-camera mount}
+            We 3D-printed a custom support for mounting the 2 cameras side-by-side. Special care was taken to ensure that the 2 cameras are aligned, and are mechanically mounted the closest possible to each other. This is done to reduce the shift between the 2 cameras the most possible.
+
+            \begin{figure}[!h]
+                \centering
+                \begin{minipage}[b]{0.4\textwidth}
+                    \includegraphics[width=\textwidth]{fig/dual_camera_no_filter_top_view.jpg}
+                    \caption{Top view.}
+                \end{minipage} \hspace{0.5em} %
+                \begin{minipage}[b]{0.4\textwidth}
+                    \includegraphics[width=\textwidth]{fig/dual_camera_no_filter_side_view.jpg}
+                    \caption{Side view.}
+                \end{minipage}
+            \end{figure}
+
+        \end{subsubsection}
+    \end{subsection} % Hardware
+
+    \begin{subsubsection}{Camera movement}
+        To support pointing the camera in any direction, we needed a way to mechanically control the horizontal and vertical angle of the mount. To this end, we added a pan-tilt module.
+
+        \medskip
+
+        The pan-tilt module is composed of 2 servomotors (1 horizontal, and 1 vertical). A servomotor is a small engine that can rotate by 180 degrees subject to a pulse of varying width. Figure~\ref{fig:servomotor_internals} shows how a servomotor responds to such a control pulse.
+
+        \begin{figure}[!h]
+            \begin{center}
+                \includegraphics[width=0.6\textwidth]{fig/servomotor_internals.jpg}
+                \caption{Servomotor rotation subject to control pulse width}
+                \label{fig:servomotor_internals}
+            \end{center}
+        \end{figure}
+
+        \newpage
+
+        We also added a joystick to the system so we could modify the width of the servomotor control pulses. Since we had an {analog} joystick in our system, we needed to use an Analog-Digital Converter (ADC) to interface it with the RPi's GPIO pins. Since the RPi doesn't have an internal ADC available, we added a very popular external one, the MCP3204.
+
+        Once we have a digital reading of the values obtained from the joystick, we need to generate 2 control pulses for the pan-tilt module's servomotors. There are many ways to do this.
+
+        \begin{enumerate}
+            \item
+        \end{enumerate}
+
+        Figure~\ref{fig:servomotor_control_loop} shows the servomotor control loop used in our system.
+
+        \begin{figure}[!h]
+            \begin{center}
+                \includegraphics[width=\textwidth]{fig/rpi_wiring.pdf}
+                \caption{Servomotor control loop (very simplified).}
+                \label{fig:servomotor_control_loop}
+            \end{center}
+        \end{figure}
+        % http://sweb.cityu.edu.hk/sm2240/4/
+    \end{subsubsection}
+
+    \begin{subsubsection}{Final system}
+        \begin{figure}[!h]
+            \begin{center}
+                \includegraphics[width=0.6\textwidth]{fig/full_system2.jpg}
+                \caption{Full acquisition system. Note the (very sophisticated) mounting mechanism used for the exposed film onto the NIR-free  RGB filter covering the sensor that does not }
+                \label{fig:full_system}
+            \end{center}
+        \end{figure}
+    \end{subsubsection}
+
+    \begin{subsection}{Synchronization}
+        \label{sec:synchronization}
+    \end{subsection} % Synchronization
+
+    \begin{subsection}{Registration algorithm to align images}
+        \label{sec:image_registration}
+        \begin{subsubsection}{Theory}
+            \textbf{Byte image:} image format where each pixel has a pixel value describing brightness. The values range between 0 and 255. Typically, zero is white and 255 is black.
+            \\ \\
+            \textbf{Keypoints:} something that stands out in the image and is consistent over several images. It is invariant towards certain transformations and insensitive to noise. Usually keypoints are found at corners and edges, due to the overlap between sections making it recognizable.
+            \\ \\
+            \textbf{Descriptors:} surrounding pixels of a keypoints. A keypoint with its descriptors creates an unique patch, working like a fingerprint for that part of the image.
+            \\ \\
+            \textbf{Kd-tree:} k-dimensional tree, data structure for organizing points in a k-dimensional space.
+            \\ \\
+            \textbf{Homography:} a reweighted version of the least squares method (measuring the smallest error to a motion parameter). The difference between least square method and homography is subtle but homography works better on non-linear relationships.
+            \\ \\
+            \textbf{RANSAC:} RANdom SAmple Consensus, a method to remove outliers in the matching process. An outlier is a match which is incorrect.
+        \end{subsubsection}
+
+        In the registration part of the project, the main purpose is to align the two images so they later can be merged. To do this, a motion parameter needs to be found that can move one image to suit the other. For this purpose, the OpenCV library has been imported. Below is a description of the steps taken in the registration process.
+
+        \begin{itemize}
+            \item Open up the images and convert their format to byte images, regardless of previous format. This is saved into an array, where each element is a list with all values for the pixels of the first row of the image.
+
+            \item Locate keypoints and descriptors using the SIFT-algorithm. SIFT has the size of 16 x 16 windows around the keypoint. It computes the gradient for each pixel, which is important in the preprocess for matching.
+
+            \item Extract the keypoints and descriptors, through a detector, extractor and compute functions.
+
+            \item Match the patches of keypoints and descriptors over the images.The Flann Index Tree and a ratio test is performed. The Flann Index is a fast way of approximating the nearest neighbor to a point in a large data set and for high dimensional features.The constructed index is a randomized kd-tree which is searched through in parallel, in our case in five trees. It computes the distances between pairs of features. The ration test put a threshold of the matches, only choosing the closest 70 \% in distance.
+
+            \item When appropriate matches are found, it’s time to get the motion parameter with the best accuracy in regard to translation and rotation. Homography and RANSAC is used, since the relationships between the motions are nonlinear. Homography evaluate the parameters in regard to how big errors they provide, choosing the best motion parameter. RANSAC is a method to remove outliers.
+
+            \item Warp the source image to the destination image, meaning make the transformation.
+
+            \item Open up the source image, the destination image and the warped source image. An image has been created consisting only of the shared content of the two input images, making it appear to be taken from the same perspective as one of the input images and with the possible to merge them.
+
+        \end{itemize}
+    \end{subsection} % Registration algorithm
+
+\end{section} % Method
 
 \begin{section}{Applications}
 
     \begin{subsection}{Skin Smoothing}
         \label{sec:skin_smoothing}
-
-        \begin{subsubsection}{Image Registration}
-            \label{sec:image_registration}
-            % dajana & rebecka
-        \end{subsubsection}
-
-        % algorithm (josselin)
     \end{subsection}
 
     \begin{subsection}{Shadow Detection}
         \label{sec:shadow_detection}
-
-        % yann
     \end{subsection}
 
 \end{section}
 
 \begin{section}{Conclusion}
     \label{sec:conclusion}
-
-    % everyone ?
 \end{section}
 
-\printbibliography
+% \begin{thebibliography}{9}
+
+%     \bibitem{lamport94}
+%     C. Fredembach, N. Barbuscia and S. Süsstrunk,
+%     \emph{A device and an algorithm for the separation of visible and near infrared signals in a monolithic Silicon sensor},
+%     Addison Wesley, Massachusetts,
+%     2nd edition,
+%     1994.
+
+% \end{thebibliography}
 
 \end{document}
