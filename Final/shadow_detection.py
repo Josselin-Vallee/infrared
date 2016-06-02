@@ -93,4 +93,3 @@ def shadowDetection(rgb, nir):
     Ubin[index] = 1
 
     return Ubin
-

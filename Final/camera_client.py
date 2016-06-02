@@ -103,14 +103,14 @@ cv2.imwrite(nir_normalized_image_file, normalize(nir_image_file))
 
 # registration
 nir_registered = registration.register(nir_normalized_image_file, rgb_image_file)
-# nir_registered = registration.register('01_nir.tiff', '01_rgb.tiff')
 cv2.imwrite(nir_registered_image_file, nir_registered)
 
-
 if pan_tilt_stdout == op_skin_smoothing:
-    final_image = merging.merge(rgb_image_file, nir_image_file)
+    final_image = merging.merge(rgb_image_file, nir_registered_image_file)
     cv2.imwrite(skin_smoothing_image_file, final_image)
 
 elif pan_tilt_stdout == op_shadow_detection:
-    final_image = shadow_detection.shadowDetection(rgb_image_file, nir_image_file)
-    cv2.imwrite(shadow_detection_image_file, final_image)
+    rgb_image_file = 'img_68_vis.png'
+    nir_registered_image_file = 'img_68_nir.png'
+    final_image = shadow_detection.shadowDetection(rgb_image_file, nir_registered_image_file)
+    scipy.misc.imsave(shadow_detection_image_file, final_image)
