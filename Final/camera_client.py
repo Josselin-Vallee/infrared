@@ -77,8 +77,8 @@ def get_images():
     finally:
         sock.close()
 
-def normalize(image_file):
-    grayscale = cv2.imread(image_file, 0)
+def normalize(src_image_file, dst_image_file):
+    grayscale = cv2.imread(src_image_file, 0)
 
     hist, bins = numpy.histogram(grayscale.flatten(), 256, [0, 256])
     cdf = hist.cumsum()
@@ -87,7 +87,8 @@ def normalize(image_file):
     cdf_m = (cdf_m - cdf_m.min())*255/(cdf_m.max()-cdf_m.min())
     cdf = numpy.ma.filled(cdf_m,0).astype('uint8')
 
-    return cdf[grayscale]
+    dst = cdf[grayscale]
+    cv2.imwrite(dst_image_file, dst)
 
 # register signal handler
 signal.signal(signal.SIGINT, sigint_handler)
@@ -99,7 +100,7 @@ print "operation requested = " + pan_tilt_stdout
 get_images()
 
 # convert nir image to grayscale
-cv2.imwrite(nir_normalized_image_file, normalize(nir_image_file))
+normalize(nir_image_file, nir_normalized_image_file)
 
 # registration
 nir_registered = registration.register(nir_normalized_image_file, rgb_image_file)
