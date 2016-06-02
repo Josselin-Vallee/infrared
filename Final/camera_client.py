@@ -110,7 +110,7 @@ if pan_tilt_stdout == op_skin_smoothing:
     cv2.imwrite(skin_smoothing_image_file, final_image)
 
 elif pan_tilt_stdout == op_shadow_detection:
-    rgb_image_file = 'img_68_vis.png'
-    nir_registered_image_file = 'img_68_nir.png'
+    # rgb_image_file = 'img_68_vis.png'
+    # nir_registered_image_file = 'img_68_nir.png'
     final_image = shadow_detection.shadowDetection(rgb_image_file, nir_registered_image_file)
     scipy.misc.imsave(shadow_detection_image_file, final_image)
